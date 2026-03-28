@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#12352f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="雲臺暗棋">
+  <title>雲臺暗棋 | 3D PWA</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" href="icons/icon-192.png" sizes="192x192" type="image/png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <div class="atmosphere atmosphere--one"></div>
+    <div class="atmosphere atmosphere--two"></div>
+    <header class="hero">
+      <div class="hero__copy">
+        <p class="hero__eyebrow">3D 暗棋 PWA</p>
+        <h1>雲臺暗棋</h1>
+        <p class="hero__lead">手機、平板、桌機都能玩，加入主畫面後就像安裝 App 一樣直接開局。</p>
+      </div>
+      <div class="hero__actions">
+        <button class="button button--secondary" id="installButton" type="button" hidden>安裝到手機</button>
+        <button class="button" id="newGameButton" type="button">重新開局</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="game-column">
+        <div class="control-bar card">
+          <label class="field">
+            <span>模式</span>
+            <select id="modeSelect">
+              <option value="ai">對戰 AI</option>
+              <option value="local">雙人同機</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>AI 強度</span>
+            <select id="difficultySelect"></select>
+          </label>
+
+          <div class="field field--buttons">
+            <span>棋盤視角</span>
+            <div class="view-controls">
+              <button class="button button--ghost" id="perspectiveButton" type="button" aria-pressed="true">360° 視角</button>
+              <button class="button button--ghost" id="resetViewButton" type="button">重設角度</button>
+            </div>
+          </div>
+        </div>
+
+        <section class="status-card card" aria-live="polite">
+          <div class="status-card__row">
+            <span class="status-pill" id="statusTurn">翻開任一枚暗子開始</span>
+            <span class="status-mini" id="statusCounts">暗子 32</span>
+          </div>
+          <p class="status-card__headline" id="statusMessage">先翻子定邊，再開始攻防。</p>
+          <p class="status-card__foot" id="statusSide">尚未定邊</p>
+          <p class="install-hint" id="installHint">使用 Chrome 或 Edge 可直接安裝，iPhone 可用「分享」加入主畫面。</p>
+        </section>
+
+        <section class="board-card card">
+          <div class="board-stage" id="boardStage">
+            <div class="board-stage__halo"></div>
+            <div class="board-stage__platform"></div>
+            <div class="board" id="board" role="grid" aria-label="暗棋棋盤"></div>
+          </div>
+          <p class="board-help" id="boardHelp">拖曳棋盤可 360 度旋轉，垂直拖曳可調整俯角。</p>
+        </section>
+
+        <section class="tips card">
+          <h2>操作方式</h2>
+          <p>點一下暗子翻面。點自己的明子後，再點發光格移動或吃子。開啟 360° 視角後，可直接拖曳棋盤旋轉。炮平常只能移動一格，但吃子時必須隔著剛好一枚棋子跳吃。</p>
+        </section>
+      </section>
+
+      <aside class="info-column">
+        <section class="panel card">
+          <h2>戰況</h2>
+          <div id="captureSummary" class="summary-stack"></div>
+        </section>
+
+        <section class="panel card">
+          <h2>暗子資訊</h2>
+          <div id="poolSummary" class="summary-stack"></div>
+        </section>
+
+        <section class="panel card">
+          <h2>規則摘要</h2>
+          <ul class="rules">
+            <li>雙方共 32 枚棋子，翻到哪一色，就執哪一色。</li>
+            <li>除炮外，所有明子都只能上下左右走一格。</li>
+            <li>將帥最大，依序可吃士仕、象相、車俥、馬傌、炮包、兵卒。</li>
+            <li>兵卒只能吃兵卒與將帥；將帥不能吃兵卒。</li>
+            <li>暗子不能移動也不能被吃，必須先翻開。</li>
+          </ul>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

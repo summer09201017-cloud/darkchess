@@ -1,0 +1,25 @@
+{
+  "name": "雲臺暗棋",
+  "short_name": "雲臺暗棋",
+  "description": "可在手機與桌機遊玩的 3D 暗棋，支援安裝與離線對戰 AI。",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#081513",
+  "theme_color": "#12352f",
+  "lang": "zh-Hant",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+.edge-profile/
+.netlify/
+node_modules/
+npm-debug.log*
