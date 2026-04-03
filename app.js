@@ -140,12 +140,19 @@ const dragState = {
   startCellIndex: null,
   suppressClickUntil: 0,
 };
+const viewRefs = {
+  boardCells: [],
+  captureCards: {},
+  poolCards: {},
+};
 
 bootstrap();
 
 function bootstrap() {
   fillDifficultyOptions();
   bindEvents();
+  ensureBoardCells();
+  ensureSummaryCards();
   syncControls();
   render();
   updateInstallHint();
@@ -340,6 +347,7 @@ function resetBoardView() {
 
 function renderBoardView() {
   elements.board.dataset.perspective = state.perspective;
+  elements.board.dataset.interaction = isBoardInteractionLocked() ? "locked" : "active";
   elements.boardStage.dataset.perspective = state.perspective;
   elements.boardStage.dataset.dragging = String(dragState.active && dragState.moved);
   elements.board.style.setProperty("--board-tilt", `${state.view.tilt}deg`);
@@ -1074,57 +1082,104 @@ function render() {
 }
 
 function renderBoard() {
+  ensureBoardCells();
   renderBoardView();
-  elements.board.innerHTML = "";
+
+  for (let index = 0; index < BOARD_SIZE; index += 1) {
+    updateBoardCell(index);
+  }
+}
+
+function ensureBoardCells() {
+  if (viewRefs.boardCells.length === BOARD_SIZE) {
+    return;
+  }
+
+  viewRefs.boardCells = [];
+  const fragment = document.createDocumentFragment();
 
   for (let index = 0; index < BOARD_SIZE; index += 1) {
     const button = document.createElement("button");
-    const piece = getPieceAt(index);
     button.type = "button";
-    button.className = buildCellClass(index, piece);
     button.dataset.index = String(index);
-    button.setAttribute("aria-label", describeCell(index, piece));
-
-    const markerLabel = buildTargetMarker(index);
-
-    if (!piece) {
-      button.innerHTML = `<span class="cell__marker">${markerLabel}</span>`;
-      elements.board.append(button);
-      continue;
-    }
-
-    const isHidden = !piece.revealed;
-    const pieceColor = isHidden ? "hidden" : piece.side;
-    const glyph = isHidden
-      ? { char: "暗", type: "FLIP" }
-      : {
-          char: pieceLabelFor(piece),
-          type: PIECE_META[piece.type].shortName,
-        };
-
     button.innerHTML = `
-      <span class="piece piece--${pieceColor}">
+      <span class="piece" hidden>
         <span class="piece__body"></span>
         <span class="piece__top">
           <span class="piece__glyph">
-            <span class="piece__char">${glyph.char}</span>
-            <span class="piece__type">${glyph.type}</span>
+            <span class="piece__char"></span>
+            <span class="piece__type"></span>
           </span>
         </span>
       </span>
-      <span class="cell__marker">${markerLabel}</span>
+      <span class="cell__marker"></span>
     `;
 
-    elements.board.append(button);
+    viewRefs.boardCells.push({
+      button,
+      piece: button.querySelector(".piece"),
+      pieceChar: button.querySelector(".piece__char"),
+      pieceType: button.querySelector(".piece__type"),
+      marker: button.querySelector(".cell__marker"),
+    });
+    fragment.append(button);
   }
+
+  elements.board.replaceChildren(fragment);
+}
+
+function updateBoardCell(index) {
+  const refs = viewRefs.boardCells[index];
+  const piece = getPieceAt(index);
+  const markerLabel = buildTargetMarker(index);
+  const nextState = {
+    className: buildCellClass(index, piece),
+    ariaLabel: describeCell(index, piece),
+    markerLabel,
+    pieceHidden: !piece,
+    pieceClass: piece ? `piece piece--${!piece.revealed ? "hidden" : piece.side}` : "piece",
+    pieceChar: !piece ? "" : piece.revealed ? pieceLabelFor(piece) : "暗",
+    pieceType: !piece ? "" : piece.revealed ? PIECE_META[piece.type].shortName : "FLIP",
+  };
+  const previousState = refs.rendered;
+
+  if (previousState && shallowEqual(previousState, nextState)) {
+    return;
+  }
+
+  if (!previousState || previousState.className !== nextState.className) {
+    refs.button.className = nextState.className;
+  }
+
+  if (!previousState || previousState.ariaLabel !== nextState.ariaLabel) {
+    refs.button.setAttribute("aria-label", nextState.ariaLabel);
+  }
+
+  if (!previousState || previousState.markerLabel !== nextState.markerLabel) {
+    refs.marker.textContent = nextState.markerLabel;
+  }
+
+  if (!previousState || previousState.pieceHidden !== nextState.pieceHidden) {
+    refs.piece.hidden = nextState.pieceHidden;
+  }
+
+  if (!previousState || previousState.pieceClass !== nextState.pieceClass) {
+    refs.piece.className = nextState.pieceClass;
+  }
+
+  if (!previousState || previousState.pieceChar !== nextState.pieceChar) {
+    refs.pieceChar.textContent = nextState.pieceChar;
+  }
+
+  if (!previousState || previousState.pieceType !== nextState.pieceType) {
+    refs.pieceType.textContent = nextState.pieceType;
+  }
+
+  refs.rendered = nextState;
 }
 
 function buildCellClass(index, piece) {
   const classes = ["cell"];
-
-  if (!isLocalActorTurn() || state.aiThinking || state.winner) {
-    classes.push("cell--disabled");
-  }
 
   if (state.selectedIndex === index) {
     classes.push("cell--selected");
@@ -1212,58 +1267,99 @@ function renderStatus() {
 }
 
 function renderCaptureSummary() {
-  elements.captureSummary.innerHTML = "";
+  ensureSummaryCards();
 
   for (const side of ["red", "black"]) {
+    const refs = viewRefs.captureCards[side];
     const live = state.pieces.filter((piece) => !piece.captured && piece.side === side).length;
     const captured = state.pieces.filter((piece) => piece.captured && piece.side === side);
-    const wrapper = document.createElement("article");
-    wrapper.className = "team-card";
+    refs.count.textContent = `剩餘 ${live}`;
 
-    wrapper.innerHTML = `
-      <div class="team-card__head">
-        <span class="team-card__title team-card__title--${side}">${SIDE_LABEL[side]}</span>
-        <span class="status-mini">剩餘 ${live}</span>
-      </div>
-      <div class="chip-row">
-        ${PIECE_TYPES.map((definition) => {
-          const count = captured.filter((piece) => piece.type === definition.type).length;
-          const sideLabel = definition.label[side];
-          return `<span class="chip ${count === 0 ? "chip--empty" : ""}"><span class="chip__char">${sideLabel}</span>x${count}</span>`;
-        }).join("")}
-      </div>
-    `;
-
-    elements.captureSummary.append(wrapper);
+    for (const definition of PIECE_TYPES) {
+      const count = captured.filter((piece) => piece.type === definition.type).length;
+      const chip = refs.chips[definition.type];
+      chip.value.textContent = `x${count}`;
+      chip.root.classList.toggle("chip--empty", count === 0);
+    }
   }
 }
 
 function renderPoolSummary() {
-  elements.poolSummary.innerHTML = "";
+  ensureSummaryCards();
+
+  for (const side of ["red", "black"]) {
+    const refs = viewRefs.poolCards[side];
+    refs.count.textContent = `${state.pieces.filter(
+      (piece) => piece.side === side && !piece.revealed && !piece.captured,
+    ).length} 枚`;
+
+    for (const definition of PIECE_TYPES) {
+      const count = state.pieces.filter(
+        (piece) => piece.side === side && piece.type === definition.type && !piece.revealed && !piece.captured,
+      ).length;
+      const chip = refs.chips[definition.type];
+      chip.value.textContent = `x${count}`;
+      chip.root.classList.toggle("chip--empty", count === 0);
+    }
+  }
+}
+
+function ensureSummaryCards() {
+  if (!Object.keys(viewRefs.captureCards).length) {
+    viewRefs.captureCards = buildSummaryCards(elements.captureSummary, (side) => SIDE_LABEL[side]);
+  }
+
+  if (!Object.keys(viewRefs.poolCards).length) {
+    viewRefs.poolCards = buildSummaryCards(elements.poolSummary, (side) => `${SIDE_LABEL[side]}未翻開`);
+  }
+}
+
+function buildSummaryCards(container, titleFactory) {
+  const cards = {};
+  const fragment = document.createDocumentFragment();
 
   for (const side of ["red", "black"]) {
     const wrapper = document.createElement("article");
+    const head = document.createElement("div");
+    const title = document.createElement("span");
+    const count = document.createElement("span");
+    const chipRow = document.createElement("div");
+    const chips = {};
+
     wrapper.className = "team-card";
+    head.className = "team-card__head";
+    title.className = `team-card__title team-card__title--${side}`;
+    title.textContent = titleFactory(side);
+    count.className = "status-mini";
+    chipRow.className = "chip-row";
 
-    wrapper.innerHTML = `
-      <div class="team-card__head">
-        <span class="team-card__title team-card__title--${side}">${SIDE_LABEL[side]}未翻開</span>
-        <span class="status-mini">${
-          state.pieces.filter((piece) => piece.side === side && !piece.revealed && !piece.captured).length
-        } 枚</span>
-      </div>
-      <div class="chip-row">
-        ${PIECE_TYPES.map((definition) => {
-          const count = state.pieces.filter(
-            (piece) => piece.side === side && piece.type === definition.type && !piece.revealed && !piece.captured,
-          ).length;
-          return `<span class="chip ${count === 0 ? "chip--empty" : ""}"><span class="chip__char">${definition.label[side]}</span>x${count}</span>`;
-        }).join("")}
-      </div>
-    `;
+    head.append(title, count);
+    wrapper.append(head, chipRow);
 
-    elements.poolSummary.append(wrapper);
+    for (const definition of PIECE_TYPES) {
+      const chip = document.createElement("span");
+      const char = document.createElement("span");
+      const value = document.createElement("span");
+
+      chip.className = "chip chip--empty";
+      char.className = "chip__char";
+      char.textContent = definition.label[side];
+      value.textContent = "x0";
+
+      chip.append(char, value);
+      chipRow.append(chip);
+      chips[definition.type] = {
+        root: chip,
+        value,
+      };
+    }
+
+    fragment.append(wrapper);
+    cards[side] = { count, chips };
   }
+
+  container.replaceChildren(fragment);
+  return cards;
 }
 
 function pieceLabelFor(piece) {
@@ -1290,6 +1386,27 @@ function updateInstallHint() {
   elements.installHint.textContent = isIos
     ? "iPhone 或 iPad 請用 Safari 的「分享」→「加入主畫面」安裝。"
     : "使用 Chrome 或 Edge 開啟時，可支援安裝與離線遊玩。";
+}
+
+function isBoardInteractionLocked() {
+  return !isLocalActorTurn() || state.aiThinking || Boolean(state.winner);
+}
+
+function shallowEqual(left, right) {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+
+  for (const key of leftKeys) {
+    if (left[key] !== right[key]) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function clamp(value, min, max) {

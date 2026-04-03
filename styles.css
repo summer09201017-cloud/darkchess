@@ -316,6 +316,11 @@ select[disabled] {
   transform: none;
 }
 
+.board[data-interaction="locked"] .cell {
+  cursor: default;
+  pointer-events: none;
+}
+
 .board-stage[data-perspective="angled"]:not([data-dragging="true"]) .board {
   cursor: grab;
 }
