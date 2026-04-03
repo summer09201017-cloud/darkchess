@@ -301,6 +301,7 @@ select[disabled] {
     inset 0 2px 0 rgba(255, 255, 255, 0.2),
     inset 0 -24px 30px rgba(0, 0, 0, 0.25),
     0 24px 50px rgba(0, 0, 0, 0.38);
+  contain: layout paint style;
   transform-style: preserve-3d;
   transition: transform 320ms ease, filter 320ms ease;
   --board-tilt: 44deg;
@@ -339,6 +340,8 @@ select[disabled] {
   background: transparent;
   cursor: pointer;
   transform-style: preserve-3d;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 
 .cell::before,
@@ -410,6 +413,8 @@ select[disabled] {
   inset: 11%;
   transform-style: preserve-3d;
   transition: transform 180ms ease;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 
 .cell:hover .piece,
@@ -456,6 +461,8 @@ select[disabled] {
     inset 0 2px 0 rgba(255, 255, 255, 0.26),
     inset 0 -10px 18px rgba(117, 74, 31, 0.24),
     0 16px 20px rgba(0, 0, 0, 0.18);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 
 .piece--hidden .piece__top {
@@ -612,6 +619,41 @@ select[disabled] {
   .board {
     width: min(87vw, 27.8rem);
     margin-left: 0;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .board-stage__halo {
+    filter: blur(14px);
+    opacity: 0.4;
+  }
+
+  .board-stage__platform {
+    opacity: 0.78;
+  }
+
+  .board[data-perspective="angled"] {
+    filter: none;
+  }
+
+  .board {
+    box-shadow:
+      inset 0 2px 0 rgba(255, 255, 255, 0.18),
+      inset 0 -14px 20px rgba(0, 0, 0, 0.2),
+      0 14px 24px rgba(0, 0, 0, 0.28);
+  }
+
+  .cell::after,
+  .piece::before {
+    filter: none;
+    opacity: 0.42;
+  }
+
+  .piece__top {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      inset 0 -7px 12px rgba(117, 74, 31, 0.2),
+      0 8px 10px rgba(0, 0, 0, 0.16);
   }
 }
 

@@ -142,6 +142,7 @@ const dragState = {
 };
 const viewRefs = {
   boardCells: [],
+  boardUi: null,
   captureCards: {},
   poolCards: {},
 };
@@ -154,7 +155,7 @@ function bootstrap() {
   ensureBoardCells();
   ensureSummaryCards();
   syncControls();
-  render();
+  render({ fullBoard: true });
   updateInstallHint();
   registerServiceWorker();
 }
@@ -448,7 +449,7 @@ function startNewGame(message) {
   state.message = message;
   saveSettings();
   syncControls();
-  render();
+  render({ fullBoard: true });
 }
 
 function handleCellClick(index) {
@@ -1073,21 +1074,26 @@ function getLivePieces(targetState, side) {
   return targetState.pieces.filter((piece) => !piece.captured && piece.side === side);
 }
 
-function render() {
+function render(options = {}) {
+  const { fullBoard = false } = options;
   syncControls();
-  renderBoard();
+  renderBoard(fullBoard);
   renderStatus();
   renderCaptureSummary();
   renderPoolSummary();
 }
 
-function renderBoard() {
+function renderBoard(forceFull = false) {
   ensureBoardCells();
   renderBoardView();
+  const snapshot = getBoardUiSnapshot();
+  const dirtyIndexes = getDirtyBoardIndexes(viewRefs.boardUi, snapshot, forceFull);
 
-  for (let index = 0; index < BOARD_SIZE; index += 1) {
+  for (const index of dirtyIndexes) {
     updateBoardCell(index);
   }
+
+  viewRefs.boardUi = snapshot;
 }
 
 function ensureBoardCells() {
@@ -1176,6 +1182,59 @@ function updateBoardCell(index) {
   }
 
   refs.rendered = nextState;
+}
+
+function getBoardUiSnapshot() {
+  return {
+    selectedIndex: state.selectedIndex,
+    legalTargetIndexes: [...new Set(state.legalTargets.map((action) => action.to))],
+    lastActionIndexes: getActionIndexes(state.lastAction),
+  };
+}
+
+function getDirtyBoardIndexes(previousSnapshot, nextSnapshot, forceFull) {
+  if (forceFull || !previousSnapshot) {
+    return [...Array(BOARD_SIZE).keys()];
+  }
+
+  const dirty = new Set();
+
+  for (const index of [
+    previousSnapshot.selectedIndex,
+    nextSnapshot.selectedIndex,
+    ...previousSnapshot.legalTargetIndexes,
+    ...nextSnapshot.legalTargetIndexes,
+    ...previousSnapshot.lastActionIndexes,
+    ...nextSnapshot.lastActionIndexes,
+  ]) {
+    if (index !== null && index !== undefined && index >= 0) {
+      dirty.add(index);
+    }
+  }
+
+  return [...dirty];
+}
+
+function getActionIndexes(action) {
+  if (!action) {
+    return [];
+  }
+
+  const indexes = [];
+
+  if (typeof action.index === "number") {
+    indexes.push(action.index);
+  }
+
+  if (typeof action.from === "number") {
+    indexes.push(action.from);
+  }
+
+  if (typeof action.to === "number") {
+    indexes.push(action.to);
+  }
+
+  return [...new Set(indexes)];
 }
 
 function buildCellClass(index, piece) {
