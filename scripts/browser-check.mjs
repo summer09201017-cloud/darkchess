@@ -84,14 +84,29 @@ const won = await page.evaluate(async () => {
     return s.pieces[cell].captured ? null : cell;
   });
   s.turnSide = human;
-  B.startNewGame === undefined;   // no-op,保持 state 參照
-  // 走任一合法手觸發 finalizeAfterAction
-  const mine = s.pieces.find((p) => p.side === human && p.revealed && !p.captured);
+  /* 走一步合法手觸發勝負判定。
+     ⚠ 暗棋只能走**相鄰**格(8 欄 × 4 列)——第一版用「第一個空格」當目標,
+       本機剛好相鄰才過、線上就紅了(典型的假紅:病在測試不在遊戲)。 */
+  const COLS = 8;
+  const adjacentEmpty = (index) => {
+    const row = Math.floor(index / COLS);
+    const col = index % COLS;
+    const cands = [];
+    if (row > 0) cands.push(index - COLS);
+    if (row < 3) cands.push(index + COLS);
+    if (col > 0) cands.push(index - 1);
+    if (col < COLS - 1) cands.push(index + 1);
+    return cands.find((i) => s.board[i] === null);
+  };
+  const mine = s.pieces.find((p) => p.side === human && p.revealed && !p.captured && adjacentEmpty(p.position) !== undefined);
   if (mine) {
-    const target = s.board.findIndex((c) => c === null);
-    if (target >= 0) { B.handleCellClick(mine.position); await sleep(200); B.handleCellClick(target); }
+    const target = adjacentEmpty(mine.position);
+    B.handleCellClick(mine.position);
+    await sleep(250);
+    B.handleCellClick(target);
   }
   await sleep(900);
+  if (!s.winner) return { winner: null, why: "沒找到有相鄰空格的己方明子", msg: document.querySelector("#statusMessage").textContent, store: localStorage.getItem("cloud-banqi:daily:v1") };
   return { winner: s.winner, msg: document.querySelector("#statusMessage").textContent,
     store: localStorage.getItem("cloud-banqi:daily:v1") };
 });
