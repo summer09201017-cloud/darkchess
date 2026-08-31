@@ -1,9 +1,11 @@
-const CACHE_NAME = "cloud-banqi-v1";
+// ★ 任何檔案有改就 bump(這支是 cache-first,不 bump 舊使用者永遠拿舊版)
+const CACHE_NAME = "cloud-banqi-v2";
 const APP_ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
+  "./daily.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",

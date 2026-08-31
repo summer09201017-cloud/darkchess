@@ -127,6 +127,21 @@ const elements = {
   boardHelp: document.querySelector("#boardHelp"),
 };
 
+/* 📱 內建瀏覽器偵測(守門 #30):教會連結走 LINE 發,LINE 的 WebView 裝不了 APP
+   (beforeinstallprompt 永遠不觸發)——開場就講「換瀏覽器」,別讓人按一顆沒反應的鈕。
+   只提醒不擋:遊戲本身在 WebView 裡照樣能玩。
+   ⚠ 位置有意義:`const` 有 TDZ,而 bootstrap() 一開場就會呼叫 updateInstallHint()
+     讀它 ⇒ 宣告必須在 bootstrap() 之前跑到,不能塞到檔案後半(放後面實測整支 app.js
+     當場拋 "Cannot access before initialization",全站白畫面)。 */
+const IN_APP_BROWSER = (() => {
+  const ua = navigator.userAgent || "";
+  if (/\bLine\//i.test(ua) || /\bLIFF\b/i.test(ua)) return { n: "LINE", m: "右上角「⋯」→「用其他瀏覽器開啟」" };
+  if (/FBAN|FBAV|FB_IAB|FB4A/i.test(ua)) return { n: "Facebook", m: "右上角「⋯」→「在外部瀏覽器中開啟」" };
+  if (/Instagram/i.test(ua)) return { n: "Instagram", m: "右上角「⋯」→「在瀏覽器中開啟」" };
+  if (/MicroMessenger/i.test(ua)) return { n: "微信", m: "右上角「⋯」→「在瀏覽器中開啟」" };
+  return null;
+})();
+
 let state = createInitialState(loadSettings());
 const dragState = {
   active: false,
@@ -148,6 +163,15 @@ const viewRefs = {
 };
 
 bootstrap();
+
+// 測試掛勾(驗收腳本用;艦隊慣例)——真人操作不經過它
+window.__banqi = {
+  get state() { return state; },
+  startDailyGame,
+  startNewGame,
+  handleCellClick,
+  createInitialState,
+};
 
 function bootstrap() {
   fillDifficultyOptions();
@@ -197,7 +221,13 @@ function createInitialState(settings = {}) {
     }
   }
 
-  const order = shuffle([...Array(BOARD_SIZE).keys()]);
+  /* 📅 每日同副牌:亂數來源換成「日期種子」⇒ 今天全世界的暗子擺法完全相同。
+     ★ 只換來源、不換演算法(seededShuffle 與 shuffle 都是 Fisher-Yates)——
+       同一個洗牌寫兩份就是漂移的溫床。 */
+  const dailyKeyForGame = settings.dailyKey || null;
+  const order = dailyKeyForGame && window.BanqiDaily
+    ? window.BanqiDaily.seededShuffle([...Array(BOARD_SIZE).keys()], window.BanqiDaily.dailyRandom(dailyKeyForGame))
+    : shuffle([...Array(BOARD_SIZE).keys()]);
   const board = Array(BOARD_SIZE).fill(null);
 
   order.forEach((cellIndex, pieceId) => {
@@ -227,6 +257,8 @@ function createInitialState(settings = {}) {
     installPrompt: null,
     lastAction: null,
     turnCount: 0,
+    dailyKey: dailyKeyForGame,   // 📅 非 null=這局是每日同副牌
+    dailyScored: false,          // 這局的成績記過了沒(一局只記一次)
   };
 }
 
@@ -251,8 +283,10 @@ function fillDifficultyOptions() {
 
 function bindEvents() {
   elements.newGameButton.addEventListener("click", () => {
-    startNewGame("重新洗牌完成，翻開暗子開始新對局。");
+    startNewGame("重新洗牌完成，翻開暗子開始新對局。");   // 一般開局=隨機洗牌(離開每日模式)
   });
+
+  document.querySelector("#dailyButton")?.addEventListener("click", startDailyGame);
 
   elements.modeSelect.addEventListener("change", () => {
     state.mode = elements.modeSelect.value;
@@ -438,18 +472,51 @@ function getCellIndexFromEventTarget(target) {
   return cell ? Number(cell.dataset.index) : null;
 }
 
-function startNewGame(message) {
+function startNewGame(message, options = {}) {
   const settings = loadSettings();
   state = createInitialState({
     ...settings,
     mode: state.mode,
     difficulty: state.difficulty,
     perspective: state.perspective,
+    dailyKey: options.dailyKey || null,   // 📅 有給=這局用今天那副牌
   });
   state.message = message;
   saveSettings();
   syncControls();
   render({ fullBoard: true });
+}
+
+/* ══════════ 📅 每日同副牌 ══════════
+   今天全世界的暗子擺法完全相同(日期種子洗牌),比誰用最少回合贏。
+   ★ 為什麼暗棋做「同副牌」而不是「殘局」:翻開才知道是它的靈魂,
+     攤開的完全資訊解謎已經不是暗棋了(見 daily.js 檔頭)。 */
+function startDailyGame() {
+  const D = window.BanqiDaily;
+  if (!D) return;                                   // daily.js 載不到:安靜退回,不弄壞遊戲
+  const key = D.dailyKey();
+  const rec = D.loadDailyBook()[key];
+  const best = rec && rec.best ? rec.best : 0;
+  startNewGame(
+    `📅 ${key} 的同一副牌——今天全世界的暗子擺法都一樣!翻子定邊,用最少回合贏。`
+    + (best ? `(你今天的最佳:${best} 回合)` : ""),
+    { dailyKey: key },
+  );
+}
+
+/** 每日模式下贏了就記(輸不記,不打擊孩子);一局只記一次 */
+function scoreDailyIfWon() {
+  const D = window.BanqiDaily;
+  if (!D || !state.dailyKey || state.dailyScored) return;
+  if (!state.winner) return;
+  // 對 AI 時只記「人贏」;雙人同機沒有「你」,誰贏都算這副牌被破了
+  const humanWon = state.mode === "ai" ? state.winner === state.humanSide : true;
+  if (!humanWon) return;
+  state.dailyScored = true;
+  const r = D.applyDailyWin(state.dailyKey, state.turnCount);
+  state.message = `📅 破解今天這副牌!用了 ${state.turnCount} 回合`
+    + (r.isNewBest ? "——今天的新紀錄!" : `(今天最佳 ${r.best} 回合)`)
+    + " 明天換新的一副!";
 }
 
 function handleCellClick(index) {
@@ -554,6 +621,7 @@ function finalizeAfterAction() {
     state.winnerReason = outcome.reason;
     state.aiThinking = false;
     state.message = outcome.message;
+    scoreDailyIfWon();   // 📅 每日同副牌:贏了就記今天最少回合(會蓋掉 message)
     return;
   }
 
@@ -612,6 +680,7 @@ function runAiTurn() {
     const winner = state.humanSide || "red";
     state.winner = winner;
     state.message = "AI 無合法手，這局由你拿下。";
+    scoreDailyIfWon();   // 📅 這條也是「贏」的其中一條路,別漏記(#32 守門存在不等於會攔的同型)
     render();
     return;
   }
@@ -1293,6 +1362,15 @@ function renderStatus() {
   const hiddenCount = state.pieces.filter((piece) => !piece.revealed && !piece.captured).length;
   const emptyCount = state.board.filter((cell) => cell === null).length;
 
+  // 📅 每日同副牌:常駐一行(哪一天的牌、已走幾回合)
+  const dailyLine = document.querySelector("#dailyLine");
+  if (dailyLine) {
+    dailyLine.hidden = !state.dailyKey;
+    if (state.dailyKey) {
+      dailyLine.textContent = `📅 每日同副牌 ${state.dailyKey}・已走 ${state.turnCount} 回合`;
+    }
+  }
+
   if (state.winner) {
     const winnerLabel =
       state.mode === "ai" && state.humanSide
@@ -1428,6 +1506,12 @@ function pieceLabelFor(piece) {
 function updateInstallHint() {
   const standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone;
   const isIos = /iphone|ipad|ipod/i.test(window.navigator.userAgent);
+
+  if (IN_APP_BROWSER) {
+    elements.installButton.hidden = true;
+    elements.installHint.textContent = `你正用 ${IN_APP_BROWSER.n} 內建瀏覽器開啟——要安裝到手機請先點${IN_APP_BROWSER.m}。棋照樣可以下!`;
+    return;
+  }
 
   if (standalone) {
     elements.installButton.hidden = true;
