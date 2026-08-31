@@ -25,7 +25,7 @@ await page.goto(URL + "/?v=" + Date.now(), { waitUntil: "networkidle" });
 await page.waitForTimeout(800);
 
 ok(await page.locator("#dailyButton").count() === 1, "有「📅 每日同副牌」鈕");
-ok((await page.locator("#verTag").textContent()).includes("每日同副牌"), "verTag 帶版本簡歷");
+ok((await page.locator("#verTag").textContent()).includes("3 副牌"), "verTag 講了每天 3 副牌");
 ok(await page.evaluate(() => !!window.BanqiDaily), "daily.js 載進來了(window.BanqiDaily 在)");
 
 await page.evaluate(() => localStorage.removeItem("cloud-banqi:daily:v1"));
@@ -35,11 +35,11 @@ await page.click("#dailyButton");
 await page.waitForTimeout(400);
 const first = await page.evaluate(() => {
   const s = window.__banqi.state;
-  return { key: s.dailyKey, board: s.board.slice(), types: s.pieces.map((p) => p.side + p.type).join(","),
+  return { key: s.dailyKey, deck: s.dailyDeck, board: s.board.slice(), types: s.pieces.map((p) => p.side + p.type).join(","),
     line: document.querySelector("#dailyLine")?.textContent || "", hidden: document.querySelector("#dailyLine")?.hidden };
 });
 ok(!!first.key && /^\d{4}-\d{2}-\d{2}$/.test(first.key), `開局=今天那副牌(${first.key})`, JSON.stringify(first.key));
-ok(first.hidden === false && first.line.includes("已走 0 回合"), "常駐狀態行在", first.line);
+ok(first.hidden === false && first.line.includes("第 1/3 副") && first.line.includes("已走 0 回合"), "常駐狀態行帶副數", first.line);
 
 // ★★ 重進一次:同一天必須逐位元相同
 await page.click("#dailyButton");
@@ -111,8 +111,20 @@ const won = await page.evaluate(async () => {
     store: localStorage.getItem("cloud-banqi:daily:v1") };
 });
 ok(!!won.winner, "推到分出勝負", JSON.stringify(won).slice(0, 160));
-ok(!!won.store && JSON.parse(won.store)[first.key]?.best > 0, "★ 贏了記戰績(" + won.store + ")");
-ok(won.msg.includes("破解") || won.msg.includes("紀錄") || won.msg.includes("回合"), "結算訊息講了破解/紀錄", won.msg);
+const rec = JSON.parse(won.store || "{}")[first.key] || {};
+ok((rec.decks || {})["1"]?.best > 0, "★ 贏了記戰績、而且是**記在第 1 副底下**(" + won.store + ")");
+ok(won.msg.includes("破解第 1 副") && won.msg.includes("已破 1/3"), "結算訊息帶副數與進度", won.msg);
+
+/* 📅 破完第 1 副 → 再按每日鈕要接**第 2 副**,而且牌面不同 */
+await page.click("#dailyButton");
+await page.waitForTimeout(500);
+const deck2 = await page.evaluate(() => {
+  const s = window.__banqi.state;
+  return { deck: s.dailyDeck, board: s.board.slice(), line: document.querySelector("#dailyLine").textContent };
+});
+ok(deck2.deck === 2, "再按每日鈕=自動接第 2 副", JSON.stringify({ deck: deck2.deck }));
+ok(JSON.stringify(deck2.board) !== JSON.stringify(first.board), "★ 第 2 副是另一副牌(擺法不同)");
+ok(deck2.line.includes("第 2/3 副") && deck2.line.includes("已破 1 副"), "狀態行帶第 2/3 副與進度", deck2.line);
 ok(errors.length === 0, "整場零 pageerror", errors.join(" | ").slice(0, 200));
 
 await browser.close();

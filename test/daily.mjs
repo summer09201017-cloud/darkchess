@@ -35,7 +35,7 @@ const ok = (label, cond, note = "") => {
 const section = (s) => console.log("\n── " + s + " ──");
 
 const BOARD_SIZE = 32;   // 暗棋 8×4
-const deal = (key) => D.seededShuffle([...Array(BOARD_SIZE).keys()], D.dailyRandom(key));
+const deal = (key, deck = 1) => D.seededShuffle([...Array(BOARD_SIZE).keys()], D.dailyRandom(key, deck));
 
 /* ══ ① 換日線 ══ */
 section("① 換日線=台北時間(UTC+8)");
@@ -90,28 +90,66 @@ section("④ 400 天的牌不重複(種子壞掉的典型症狀)");
   ok("第一格 40 天內至少換過 10 種", firsts.size >= 10, String(firsts.size));
 }
 
+/* ══ ④b 每日 3 副牌(0831 使用者點名「每日 3 副牌」)══ */
+section(`④b 每日 ${D.DAILY_DECK_COUNT} 副:副副不同、各自決定性、可跳著打`);
+{
+  const key = "2026-08-31";
+  const decks = [];
+  for (let n = 1; n <= D.DAILY_DECK_COUNT; n += 1) decks.push(deal(key, n));
+  ok(`一天 ${D.DAILY_DECK_COUNT} 副`, D.DAILY_DECK_COUNT === 3, String(D.DAILY_DECK_COUNT));
+  ok("★ 同一天同一副必逐位元相同", JSON.stringify(deal(key, 2)) === JSON.stringify(decks[1]));
+  ok("★ 同一天的三副互不相同", new Set(decks.map((d) => d.join(","))).size === decks.length);
+  ok("每副都是合法排列(0~31 不重不漏)",
+    decks.every((d) => new Set(d).size === BOARD_SIZE && Math.min(...d) === 0 && Math.max(...d) === 31));
+  /* ★★ 可跳著打:第 3 副**不必先算前兩副**就拿得到(種子是 key#n,不是同一條流往下取)
+     ——這是刻意的設計,玩家跳著打時牌面照樣正確。 */
+  const alone = D.seededShuffle([...Array(BOARD_SIZE).keys()], D.dailyRandom(key, 3));
+  ok("★★ 直接算第 3 副=依序算到第 3 副(跳著打也對)", JSON.stringify(alone) === JSON.stringify(decks[2]));
+  ok("第 1 副的種子與舊版(單副)相同(不動已上線那副牌)",
+    JSON.stringify(deal(key, 1)) === JSON.stringify(D.seededShuffle([...Array(BOARD_SIZE).keys()], D.dailyRandom(key))));
+  // 400 天 × 3 副:整組指紋不重複
+  const seen = new Set();
+  for (let i = 0; i < 400; i += 1) {
+    const k = D.dailyKey(Date.UTC(2026, 7, 31) + i * 86400000);
+    for (let n = 1; n <= D.DAILY_DECK_COUNT; n += 1) seen.add(deal(k, n).join(","));
+  }
+  ok(`400 天 × ${D.DAILY_DECK_COUNT} 副 = ${400 * D.DAILY_DECK_COUNT} 副全不同`,
+    seen.size === 400 * D.DAILY_DECK_COUNT, String(seen.size));
+}
+
 /* ══ ⑤ 戰績 ══ */
-section("⑤ 戰績:當日最少回合、新紀錄、留 60 天");
+section("⑤ 戰績:每副分開記、當日最少回合、新紀錄、留 60 天");
 {
   store.clear();
-  const r1 = D.applyDailyWin("2026-08-31", 30);
+  const r1 = D.applyDailyWin("2026-08-31", 1, 30);
   ok("第一次贏=新紀錄 30", r1.isNewBest === true && r1.best === 30 && r1.played === 1, JSON.stringify(r1));
-  const r2 = D.applyDailyWin("2026-08-31", 42);
+  const r2 = D.applyDailyWin("2026-08-31", 1, 42);
   ok("較差的成績不蓋掉紀錄(仍是 30),但玩過次數 +1", r2.best === 30 && r2.isNewBest === false && r2.played === 2, JSON.stringify(r2));
-  const r3 = D.applyDailyWin("2026-08-31", 21);
+  const r3 = D.applyDailyWin("2026-08-31", 1, 21);
   ok("更好的成績刷新紀錄(21)", r3.best === 21 && r3.isNewBest === true, JSON.stringify(r3));
+  const r4 = D.applyDailyWin("2026-08-31", 2, 33);
+  ok("★ 每副分開記(第 2 副的 33 不會蓋掉第 1 副的 21)",
+    r4.best === 33 && r4.brokenCount === 2 && D.dailyDecks("2026-08-31")["1"].best === 21,
+    JSON.stringify(D.dailyDecks("2026-08-31")));
+  ok("dailyDecks 回得出今天破了哪幾副", Object.keys(D.dailyDecks("2026-08-31")).sort().join(",") === "1,2");
   // 65 天 → 只留 60
   store.clear();
-  for (let i = 0; i < 65; i++) D.applyDailyWin(D.dailyKey(Date.UTC(2026, 0, 1) + i * 86400000), 25);
+  for (let i = 0; i < 65; i++) D.applyDailyWin(D.dailyKey(Date.UTC(2026, 0, 1) + i * 86400000), 1, 25);
   const book = D.loadDailyBook();
   ok("只留最近 60 天", Object.keys(book).length === 60, String(Object.keys(book).length));
   ok("留下的是**較新**的那些(最舊那天已被清掉)", !book["2026-01-01"] && !!book[D.dailyKey(Date.UTC(2026, 0, 1) + 64 * 86400000)]);
+  // 舊格式(單副版 { best, played })寬鬆遷移:視為都沒破、不炸
+  store.clear();
+  store.set("cloud-banqi:daily:v1", JSON.stringify({ "2026-08-31": { best: 12, played: 3 } }));
+  ok("舊格式讀進來視為都沒破(不炸、不誤報)", Object.keys(D.dailyDecks("2026-08-31")).length === 0);
+  const rOld = D.applyDailyWin("2026-08-31", 1, 40);
+  ok("舊格式之後照樣記得動", rOld.best === 40 && rOld.brokenCount === 1, JSON.stringify(rOld));
   // 壞掉的 localStorage 不能炸(私密模式)
   const bad = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
   const win2 = {};
   new Function("window", "localStorage", src)(win2, bad);
   let threw = false;
-  try { win2.BanqiDaily.applyDailyWin("2026-08-31", 10); } catch { threw = true; }
+  try { win2.BanqiDaily.applyDailyWin("2026-08-31", 1, 10); } catch { threw = true; }
   ok("localStorage 全被擋時不炸(私密模式照玩)", !threw);
 }
 

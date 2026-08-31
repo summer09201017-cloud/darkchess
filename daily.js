@@ -24,10 +24,17 @@ function mulberry32(seed) {
   };
 }
 
-/** 日期 → 亂數函式(同一天必同一序列) */
-function dailyRandom(key) {
+/* 每天出幾副牌。★ 3 副=一次坐下來打得完(暗棋一局比解謎久得多,
+   所以是 3 不是棋類每日題的 5;0831 使用者點名「每日 3 副牌」)。 */
+const DAILY_DECK_COUNT = 3;
+
+/** 日期 → 亂數函式(同一天必同一序列)。deckNo(1 起)=今天的第幾副牌。
+    ★ 把副數揉進種子字串(不是「同一條流往下取」)⇒ 每副牌**各自獨立可重現**:
+      玩家跳著打第 3 副,牌面照樣是對的(往下取的做法要先算前兩副才拿得到第三副)。 */
+function dailyRandom(key, deckNo = 1) {
+  const seedStr = deckNo > 1 ? `${key}#${deckNo}` : key;   // #1 保持與舊版同種子(不動已上線那副)
   let h = 0x811c9dc5;
-  for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  for (let i = 0; i < seedStr.length; i++) { h ^= seedStr.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
   return mulberry32(h);
 }
 
@@ -41,8 +48,11 @@ function seededShuffle(items, rng) {
   return items;
 }
 
-/* ══ 戰績:{ "YYYY-MM-DD": { best: 最少回合, played: 玩過幾次 } } ══
-   零上傳、全包 try/catch(私密模式照玩,只是記不住);只留 60 天。 */
+/* ══ 戰績:{ "YYYY-MM-DD": { decks: { 副數: { best: 最少回合, played: 幾次 } } } } ══
+   一天 3 副 ⇒ **每副分開記**(才知道今天破了幾副、哪副還沒破)。
+   零上傳、全包 try/catch(私密模式照玩,只是記不住);只留 60 天。
+   ⚠ 舊格式(單副版 `{ best, played }`)沒有 decks ⇒ 視為都沒破、可重打
+     (寬鬆遷移,不炸不誤報;舊資料只有「那一天」,隔天自然被 60 天上限清掉)。 */
 const STORE_KEY = "cloud-banqi:daily:v1";
 
 function loadDailyBook() {
@@ -50,18 +60,34 @@ function loadDailyBook() {
   catch { return {}; }
 }
 
-/** 贏了才記(輸不記錄,不打擊孩子);回 { best, isNewBest } 給結算講話用 */
-function applyDailyWin(key, turns) {
+function dayRecord(all, key) {
+  const d = all[key];
+  return (d && typeof d === "object" && d.decks) ? d : { decks: {} };
+}
+
+/** 今天各副的紀錄(給 UI 算「接第幾副」與進度用) */
+function dailyDecks(key) {
+  return dayRecord(loadDailyBook(), key).decks;
+}
+
+/** 贏了才記(輸不記錄,不打擊孩子);回 { best, isNewBest, played, brokenCount } */
+function applyDailyWin(key, deckNo, turns) {
   const all = loadDailyBook();
-  const prev = all[key] && all[key].best ? all[key].best : 0;
-  const isNewBest = !prev || turns < prev;
-  const played = (all[key] && all[key].played ? all[key].played : 0) + 1;
-  all[key] = { best: isNewBest ? turns : prev, played };
+  const day = dayRecord(all, key);
+  const no = String(deckNo || 1);
+  const rec = day.decks[no] || { best: 0, played: 0 };
+  const isNewBest = !rec.best || turns < rec.best;
+  day.decks[no] = { best: isNewBest ? turns : rec.best, played: rec.played + 1 };
+  all[key] = day;
   const days = Object.keys(all).sort();
   while (days.length > 60) delete all[days.shift()];
   try { localStorage.setItem(STORE_KEY, JSON.stringify(all)); } catch { /* 私密模式 */ }
-  return { best: all[key].best, isNewBest, played };
+  return { best: day.decks[no].best, isNewBest, played: day.decks[no].played,
+    brokenCount: Object.keys(day.decks).length };
 }
 
 // ★ app.js 是傳統 script(非 module)⇒ 用全域命名空間交件,不用 import/export。
-window.BanqiDaily = { dailyKey, dailyRandom, seededShuffle, loadDailyBook, applyDailyWin };
+window.BanqiDaily = {
+  dailyKey, dailyRandom, seededShuffle, loadDailyBook, applyDailyWin,
+  dailyDecks, DAILY_DECK_COUNT,
+};

@@ -225,8 +225,10 @@ function createInitialState(settings = {}) {
      ★ 只換來源、不換演算法(seededShuffle 與 shuffle 都是 Fisher-Yates)——
        同一個洗牌寫兩份就是漂移的溫床。 */
   const dailyKeyForGame = settings.dailyKey || null;
+  const dailyDeckNo = dailyKeyForGame ? Math.max(1, settings.dailyDeck | 0 || 1) : 0;   // 📅 今天第幾副
   const order = dailyKeyForGame && window.BanqiDaily
-    ? window.BanqiDaily.seededShuffle([...Array(BOARD_SIZE).keys()], window.BanqiDaily.dailyRandom(dailyKeyForGame))
+    ? window.BanqiDaily.seededShuffle([...Array(BOARD_SIZE).keys()],
+      window.BanqiDaily.dailyRandom(dailyKeyForGame, dailyDeckNo))
     : shuffle([...Array(BOARD_SIZE).keys()]);
   const board = Array(BOARD_SIZE).fill(null);
 
@@ -258,6 +260,7 @@ function createInitialState(settings = {}) {
     lastAction: null,
     turnCount: 0,
     dailyKey: dailyKeyForGame,   // 📅 非 null=這局是每日同副牌
+    dailyDeck: dailyDeckNo,      // 📅 今天的第幾副(1 起;0=不是每日模式)
     dailyScored: false,          // 這局的成績記過了沒(一局只記一次)
   };
 }
@@ -286,7 +289,9 @@ function bindEvents() {
     startNewGame("重新洗牌完成，翻開暗子開始新對局。");   // 一般開局=隨機洗牌(離開每日模式)
   });
 
-  document.querySelector("#dailyButton")?.addEventListener("click", startDailyGame);
+  /* ★ 包一層:直接掛 startDailyGame 會把 click event 當成 deckNo 傳進去
+     (Number.isInteger(event) 是 false 所以剛好沒壞,但那是巧合——不留這種接線)。 */
+  document.querySelector("#dailyButton")?.addEventListener("click", () => startDailyGame());
 
   elements.modeSelect.addEventListener("change", () => {
     state.mode = elements.modeSelect.value;
@@ -480,6 +485,7 @@ function startNewGame(message, options = {}) {
     difficulty: state.difficulty,
     perspective: state.perspective,
     dailyKey: options.dailyKey || null,   // 📅 有給=這局用今天那副牌
+    dailyDeck: options.dailyDeck || 0,    // 📅 今天的第幾副(1 起)
   });
   state.message = message;
   saveSettings();
@@ -491,16 +497,34 @@ function startNewGame(message, options = {}) {
    今天全世界的暗子擺法完全相同(日期種子洗牌),比誰用最少回合贏。
    ★ 為什麼暗棋做「同副牌」而不是「殘局」:翻開才知道是它的靈魂,
      攤開的完全資訊解謎已經不是暗棋了(見 daily.js 檔頭)。 */
-function startDailyGame() {
+/** 今天一共幾副、破了幾副、下一副是第幾副(全部從戰績算,不另存狀態) */
+function dailyProgress() {
+  const D = window.BanqiDaily;
+  if (!D) return null;
+  const key = D.dailyKey();
+  const total = D.DAILY_DECK_COUNT;
+  const decks = D.dailyDecks(key);
+  const broken = Object.keys(decks).filter((n) => decks[n] && decks[n].best).length;
+  let next = 0;                                   // 1 起;0=全破完了
+  for (let i = 1; i <= total; i += 1) if (!(decks[String(i)] && decks[String(i)].best)) { next = i; break; }
+  return { key, total, decks, broken, next };
+}
+
+/* 開今天的第 deckNo 副(不給=今天還沒破的第一副;全破完 → 回第 1 副可重打拚更少回合) */
+function startDailyGame(deckNo) {
   const D = window.BanqiDaily;
   if (!D) return;                                   // daily.js 載不到:安靜退回,不弄壞遊戲
-  const key = D.dailyKey();
-  const rec = D.loadDailyBook()[key];
+  const prog = dailyProgress();
+  const no = Number.isInteger(deckNo) && deckNo >= 1
+    ? Math.min(deckNo, prog.total)
+    : (prog.next || 1);
+  const rec = prog.decks[String(no)];
   const best = rec && rec.best ? rec.best : 0;
   startNewGame(
-    `📅 ${key} 的同一副牌——今天全世界的暗子擺法都一樣!翻子定邊,用最少回合贏。`
-    + (best ? `(你今天的最佳:${best} 回合)` : ""),
-    { dailyKey: key },
+    `📅 ${prog.key} 第 ${no}/${prog.total} 副牌(今天已破 ${prog.broken} 副)`
+    + `——今天全世界的暗子擺法都一樣!翻子定邊,用最少回合贏。`
+    + (best ? `(這副你的最佳:${best} 回合)` : ""),
+    { dailyKey: prog.key, dailyDeck: no },
   );
 }
 
@@ -513,10 +537,12 @@ function scoreDailyIfWon() {
   const humanWon = state.mode === "ai" ? state.winner === state.humanSide : true;
   if (!humanWon) return;
   state.dailyScored = true;
-  const r = D.applyDailyWin(state.dailyKey, state.turnCount);
-  state.message = `📅 破解今天這副牌!用了 ${state.turnCount} 回合`
-    + (r.isNewBest ? "——今天的新紀錄!" : `(今天最佳 ${r.best} 回合)`)
-    + " 明天換新的一副!";
+  const total = D.DAILY_DECK_COUNT;
+  const r = D.applyDailyWin(state.dailyKey, state.dailyDeck, state.turnCount);
+  state.message = `📅 破解第 ${state.dailyDeck} 副!用了 ${state.turnCount} 回合`
+    + (r.isNewBest ? "(新紀錄!)" : `(這副最佳 ${r.best} 回合)`)
+    + `・今天已破 ${r.brokenCount}/${total} 副`
+    + (r.brokenCount >= total ? " —— 今天全破了,明天換新的三副!" : "(按「📅 每日同副牌」接下一副)");
 }
 
 function handleCellClick(index) {
@@ -1367,7 +1393,9 @@ function renderStatus() {
   if (dailyLine) {
     dailyLine.hidden = !state.dailyKey;
     if (state.dailyKey) {
-      dailyLine.textContent = `📅 每日同副牌 ${state.dailyKey}・已走 ${state.turnCount} 回合`;
+      const prog = dailyProgress();
+      dailyLine.textContent = `📅 ${state.dailyKey} 第 ${state.dailyDeck}/${prog ? prog.total : 1} 副`
+        + `(今天已破 ${prog ? prog.broken : 0} 副)・已走 ${state.turnCount} 回合`;
     }
   }
 
