@@ -379,6 +379,37 @@ select[disabled] {
     radial-gradient(circle at top, rgba(255, 255, 255, 0.16), transparent 55%);
 }
 
+/* 💡 提示指的格子:紫框。
+   selected 綠 / last 另一色 / movable 綠點 / capturable 紅點 都已佔用 ——
+   撞色的話「提示」跟「這格我可以走」在畫面上分不出來,提示就白給。
+   ⚠ 不只靠顏色(色覺不同的孩子):外框之外另外壓一顆 💡。 */
+.cell--hint::before {
+  background:
+    linear-gradient(180deg, rgba(168, 85, 247, 0.55), rgba(76, 57, 25, 0.88)),
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.2), transparent 55%);
+  box-shadow: inset 0 0 0 3px rgba(168, 85, 247, 0.95);
+}
+
+/* ⚠ 這顆 💡 是**真的子元素**,不是 .cell--hint::after ——
+   ::after 這站已經拿去畫格子底下的陰影了(見上面 .cell::after),
+   覆寫它會把那一格的陰影整個弄不見。 */
+.cell__hint {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-size: 13px;
+  line-height: 1;
+  z-index: 4;
+  pointer-events: none;
+  display: none;
+}
+
+/* 這顆 💡 一直在 DOM 裡,只靠父層 class 開關 ——
+   這站的棋格是「有 refs + 逐格 diff」的架構,插拔節點會跟它打架。 */
+.cell--hint .cell__hint {
+  display: block;
+}
+
 .cell--last::before {
   box-shadow:
     inset 0 0 0 2px rgba(216, 157, 71, 0.55),

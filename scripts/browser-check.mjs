@@ -70,6 +70,62 @@ const played = await page.evaluate(async () => {
 ok(played.revealed >= 1 && played.turns >= 1, `翻子能玩(已翻 ${played.revealed} 子・${played.turns} 回合)`, JSON.stringify(played));
 ok(played.line.includes("回合"), "狀態行跟著回合走", played.line);
 
+/* 💡 提示鈕:真的用滑鼠按(不是 evaluate 裡呼叫 showHint)。
+   evaluate-not-click-guard 存在的理由就是這個 —— 繞過真點擊的話,
+   「鈕被別的東西蓋住、按不到」這種病照樣全綠。 */
+ok(await page.locator("#hintButton").count() === 1, "有「💡 提示」鈕");
+// 等到輪回玩家(上面翻完一子後 AI 會走一手)
+await page.waitForFunction(() => {
+  const B = window.__banqi;
+  return !B.state.aiThinking && !B.state.winner
+    && (B.state.humanSide === null || B.state.turnSide === B.state.humanSide);
+}, null, { timeout: 8000 }).catch(() => {});
+await page.click("#hintButton");
+await page.waitForTimeout(600);
+const hintA = await page.evaluate(() => {
+  const B = window.__banqi;
+  const h = B.state.hint;
+  return {
+    action: h ? { ...h.action } : null,
+    turnCount: h ? h.turnCount : null,
+    stateTurn: B.state.turnCount,
+    msg: document.querySelector("#statusMessage").textContent,
+    purple: document.querySelectorAll(".cell--hint").length,
+    badge: document.querySelectorAll(".cell--hint .cell__hint").length,
+  };
+});
+ok(Boolean(hintA.action), "按下去算得出一手", JSON.stringify(hintA));
+ok(hintA.msg.includes("建議"), "狀態列講出建議", hintA.msg);
+ok(hintA.purple >= 1 && hintA.badge === hintA.purple,
+  "提示的格子標成紫框 + 每一格都壓了 💡(不只靠顏色)",
+  `purple=${hintA.purple} badge=${hintA.badge}`);
+// 翻子=標 1 格;走/吃=起點終點兩格
+ok(hintA.action.type === "flip" ? hintA.purple === 1 : hintA.purple === 2,
+  `標的格數對得上動作型別(${hintA.action.type} ⇒ ${hintA.purple} 格)`);
+ok(await page.evaluate(() => {                      // 建議必須是**合法**動作
+  const B = window.__banqi;
+  const h = B.state.hint.action;
+  const legal = B.getLegalActions(B.state, B.state.turnSide);
+  return legal.some((a) => a.type === h.type
+    && a.index === h.index && a.from === h.from && a.to === h.to);
+}), "建議的那一手是合法動作");
+
+await page.click("#hintButton");                    // 同一手再按一次 ⇒ 同一個建議
+await page.waitForTimeout(400);
+const hintB = await page.evaluate(() => JSON.stringify(window.__banqi.state.hint.action));
+ok(hintB === JSON.stringify(hintA.action),
+  "同一個局面按兩次 ⇒ 同一個建議(零隨機檔位,不跳針)",
+  JSON.stringify(hintA.action) + " vs " + hintB);
+
+// 局面一動,舊建議自己失效(比對 turnCount/side,不靠逐處清)
+await page.evaluate(() => { window.__banqi.state.turnCount += 1; });
+await page.waitForTimeout(50);
+ok(await page.evaluate(() => {
+  const B = window.__banqi;
+  return B.state.hint.turnCount !== B.state.turnCount;
+}), "★ 局面一變,上一個建議自己就對不上了(不靠逐處清)");
+await page.evaluate(() => { window.__banqi.state.turnCount -= 1; });
+
 // 引擎層直推到人贏(驗戰績鏈;真下完一盤太久)
 const won = await page.evaluate(async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

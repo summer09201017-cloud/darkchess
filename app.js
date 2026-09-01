@@ -112,6 +112,7 @@ const elements = {
   board: document.querySelector("#board"),
   boardStage: document.querySelector("#boardStage"),
   newGameButton: document.querySelector("#newGameButton"),
+  hintButton: document.querySelector("#hintButton"),
   installButton: document.querySelector("#installButton"),
   modeSelect: document.querySelector("#modeSelect"),
   difficultySelect: document.querySelector("#difficultySelect"),
@@ -171,6 +172,7 @@ window.__banqi = {
   startNewGame,
   handleCellClick,
   createInitialState,
+  getLegalActions,   // 💡 冒煙要用它驗「提示那一手真的合法」
 };
 
 function bootstrap() {
@@ -258,6 +260,10 @@ function createInitialState(settings = {}) {
     aiThinking: false,
     installPrompt: null,
     lastAction: null,
+    /* 💡 AI 提示:{ turnCount, side, action } —— 算它的時候是第幾手、輪到誰。
+       對不上就重算 ⇒ 局面一變舊建議自己失效,不必去每個動棋盤的地方補一行清除。
+       放在這個工廠裡 ⇒ 重新開局自然歸零(不是另外記得去清)。 */
+    hint: null,
     turnCount: 0,
     dailyKey: dailyKeyForGame,   // 📅 非 null=這局是每日同副牌
     dailyDeck: dailyDeckNo,      // 📅 今天的第幾副(1 起;0=不是每日模式)
@@ -288,6 +294,11 @@ function bindEvents() {
   elements.newGameButton.addEventListener("click", () => {
     startNewGame("重新洗牌完成，翻開暗子開始新對局。");   // 一般開局=隨機洗牌(離開每日模式)
   });
+
+  // 💡 AI 提示:借同一支 chooseAiAction,把 aiSide 換成「現在該走的這一邊」
+  if (elements.hintButton) {
+    elements.hintButton.addEventListener("click", showHint);
+  }
 
   /* ★ 包一層:直接掛 startDailyGame 會把 click event 當成 deckNo 傳進去
      (Number.isInteger(event) 是 false 所以剛好沒壞,但那是巧合——不留這種接線)。 */
@@ -718,9 +729,17 @@ function runAiTurn() {
   render();
 }
 
+/* 💡 提示專用的檔位:最深、而且**零隨機**。
+   ⚠ 刻意不放進 AI_LEVELS —— 難度下拉是直接遍歷 AI_LEVELS 生出來的(見 renderDifficultyOptions),
+     放進去會多一個玩家選得到的假難度。
+   為什麼一定要零隨機:chooseAiAction 會加 (rand-0.5)*randomness*70 的噪音、
+   還會從 topChoices 裡隨機挑 ⇒ 同一個局面按兩次會給不同的手,看起來像跳針。
+   randomness 0 + topChoices 1 ⇒ 噪音項是 0、pool 只有一個、Math.random() < 0 恆假。 */
+const HINT_LEVEL = { label: "提示", depth: 3, thinkMs: 900, randomness: 0, topChoices: 1 };
+
 function chooseAiAction(targetState) {
   const side = targetState.aiSide;
-  const level = AI_LEVELS[targetState.difficulty];
+  const level = targetState.hintLevel || AI_LEVELS[targetState.difficulty];
   const deadline = performance.now() + level.thinkMs;
   const actions = orderActionsForSearch(
     targetState,
@@ -1214,6 +1233,7 @@ function ensureBoardCells() {
         </span>
       </span>
       <span class="cell__marker"></span>
+      <span class="cell__hint" aria-hidden="true">💡</span>
     `;
 
     viewRefs.boardCells.push({
@@ -1332,11 +1352,107 @@ function getActionIndexes(action) {
   return [...new Set(indexes)];
 }
 
+/* 💡 提示只在「算它的那一手」上有效 —— 對不上就當沒有。
+   ★ 不去每個會改動局面的地方補一行 clearHint():漏一處就是「提示指著一格早就過期的棋」,
+     而且不會有任何東西報錯。用**比對**取代**逐處清除**,結構上不可能過期。 */
+function getActiveHintAction() {
+  if (!state.hint) {
+    return null;
+  }
+  return (state.hint.turnCount === state.turnCount && state.hint.side === state.turnSide)
+    ? state.hint.action
+    : null;
+}
+
+/* 💡 AI 提示:借的是**同一支** chooseAiAction —— 提示與對手同源,
+   只是把 aiSide 換成「現在該走的這一邊」,並掛上零隨機的 HINT_LEVEL。
+   ⚠ 暗棋是**不完全資訊**(蓋著的子還沒翻開),所以這裡的建議本質上是
+     「以目前看得到的資訊,期望值最高的一手」,不是保證最好的一手 ——
+     文案要照這個講,不可以講成「照著走一定贏」(那是對孩子說謊)。
+   文案三態不可混講:有建議 / 這局結束了 / 真的沒有可走的。 */
+function showHint() {
+  if (state.winner) {
+    setHintMessage("💡 這一局已經結束了。");
+    return;
+  }
+  if (state.aiThinking || !isLocalActorTurn()) {
+    return;                                   // 不是你的回合,或 AI 正在想
+  }
+
+  /* ★ 還沒定邊(一子都還沒翻)⇒ 誠實說「不用建議」,不要假裝算得出東西。
+     暗棋的第一翻決定你是哪一邊,每一枚在那一刻都一樣 ——
+     這時候硬推薦某一格,是給一個沒有根據的答案。 */
+  if (state.turnSide === null) {
+    setHintMessage("💡 還沒定邊:第一翻決定你是紅方還是黑方,翻哪一枚都可以。");
+    return;
+  }
+
+  if (getActiveHintAction()) {                // 同一手按幾次都回同一個建議
+    renderBoard(true);
+    renderStatus();
+    return;
+  }
+
+  let action = null;
+  try {
+    const probe = cloneState(state);
+    probe.aiSide = state.turnSide;            // 讓搜尋站在「現在該走的這一邊」
+    probe.hintLevel = HINT_LEVEL;             // 最深 + 零隨機
+    action = chooseAiAction(probe);
+  } catch (error) {
+    console.error("[hint] chooseAiAction threw:", error);
+    setHintMessage("💡 這一手算不出來,先自己走走看。");
+    return;
+  }
+
+  if (!action) {
+    setHintMessage("💡 找不到可走的棋了。");
+    return;
+  }
+
+  state.hint = { turnCount: state.turnCount, side: state.turnSide, action };
+  renderBoard(true);
+  renderStatus();
+}
+
+/* 提示文字寫進 statusMessage,並且**下一次 renderStatus 就會被蓋掉** ——
+   這是刻意的:提示是一次性的話,不該留在畫面上假裝是常駐狀態。 */
+function setHintMessage(text) {
+  elements.statusMessage.textContent = text;
+}
+
+function describeHintAction(action) {
+  if (!action) {
+    return "";
+  }
+  if (action.type === "flip") {
+    return "💡 建議:翻開紫框那一枚暗子(暗棋看不到蓋著的子,這是以目前資訊最划算的一翻)";
+  }
+  const moving = getPieceAt(action.from);
+  const target = getPieceAt(action.to);
+  const name = moving && moving.revealed ? pieceLabelFor(moving) : "那一枚";
+  return action.type === "capture" && target && target.revealed
+    ? `💡 建議:用${name}吃掉對方的${pieceLabelFor(target)}(紫框=從哪裡到哪裡)`
+    : `💡 建議:把${name}走到另一個紫框(紫框=從哪裡到哪裡)`;
+}
+
 function buildCellClass(index, piece) {
   const classes = ["cell"];
 
   if (state.selectedIndex === index) {
     classes.push("cell--selected");
+  }
+
+  /* 💡 提示指的那一格(翻子=那一枚;走/吃=起點與終點都標)。
+     紫色是挑過的:selected/last/movable/capturable 四色都已佔用,
+     撞色的話「提示」跟「這格我可以走」在畫面上分不出來。 */
+  const hintAction = getActiveHintAction();
+  if (hintAction) {
+    if (hintAction.type === "flip" && hintAction.index === index) {
+      classes.push("cell--hint");
+    } else if (hintAction.from === index || hintAction.to === index) {
+      classes.push("cell--hint");
+    }
   }
 
   if (
@@ -1415,7 +1531,10 @@ function renderStatus() {
     elements.statusTurn.textContent = "翻開任一枚暗子開始";
   }
 
-  elements.statusMessage.textContent = state.message;
+  /* 💡 提示還有效的時候,它蓋過常駐訊息;局面一動 getActiveHintAction() 就回 null,
+     訊息自己換回來 —— 不需要另外去清。 */
+  const liveHint = getActiveHintAction();
+  elements.statusMessage.textContent = liveHint ? describeHintAction(liveHint) : state.message;
   elements.statusCounts.textContent = `暗子 ${hiddenCount} ・ 空格 ${emptyCount}`;
 
   if (state.mode === "ai") {
