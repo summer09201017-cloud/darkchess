@@ -7,7 +7,7 @@
 **https://darkchesscodex.pages.dev** —— Cloudflare Pages 專案 `darkchesscodex`。
 
 - 德義作品集卡片:`darkchess`「暗棋」(棋類)。
-- 舊址 `darkchesscodex.netlify.app`(2026-09-03 實測仍回 200 供舊內容,尚未改 301 殼);
+- 舊址 `darkchesscodex.netlify.app` 已於 2026-09-03 改成 301 殼,轉到上面的正版(curl 實測 301);
   repo 裡的 `netlify.toml`(`publish = "."`)是 Netlify 時代殘留,CF Pages 不讀它。
 - ⚠ **名字陷阱**:repo 叫 `darkchess`,但 **`darkchess.pages.dev` 不是本 repo**——那是德義另一個作品
   「暗棋(早期版)」(作品集卡 `darkchess-pages`),源碼在另一顆硬碟、不在這台機的 Cloudflare 帳號 Pages 清單裡
