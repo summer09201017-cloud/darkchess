@@ -656,6 +656,8 @@ function finalizeAfterAction() {
   if (outcome) {
     state.winner = outcome.side;
     state.winnerReason = outcome.reason;
+    // 📡 完賽 beacon:對局分出勝負 = 一次 -done(finalizeAfterAction 在 winner 定下後不會再進來;統計是配菜,失敗靜默)。
+    try { if (window.psDone) window.psDone(); } catch (e) {}
     state.aiThinking = false;
     state.message = outcome.message;
     scoreDailyIfWon();   // 📅 每日同副牌:贏了就記今天最少回合(會蓋掉 message)
