@@ -1,5 +1,5 @@
 // ★ 任何檔案有改就 bump(這支是 cache-first,不 bump 舊使用者永遠拿舊版)
-const CACHE_NAME = "cloud-banqi-v5";
+const CACHE_NAME = "cloud-banqi-v6";
 const APP_ASSETS = [
   "./",
   "./index.html",

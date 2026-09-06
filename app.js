@@ -184,6 +184,8 @@ function bootstrap() {
   render({ fullBoard: true });
   updateInstallHint();
   registerServiceWorker();
+  /* 🔗 ?daily 深連結(0906,信友火花「今日挑戰」卡直達):等於代按「📅 每日同副牌」(daily.js 在 app.js 之前載,window.BanqiDaily 已在)。 */
+  if (/[?&]daily(?:=|&|$)/.test(location.search)) startDailyGame();
 }
 
 function loadSettings() {
