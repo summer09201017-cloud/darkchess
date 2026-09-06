@@ -2,3 +2,6 @@
 .netlify/
 node_modules/
 npm-debug.log*
+
+# wrangler deploy 暫存(本機產物,repo-hygiene 會盯)
+.wrangler/
