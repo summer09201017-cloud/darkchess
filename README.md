@@ -29,7 +29,7 @@
 | `index.html` / `styles.css` | 殼層與版面 |
 | `app.js` | 規則、3D 渲染、AI、提示 |
 | `daily.js` | 每日同副牌 |
-| `sw.js` | Service Worker,`CACHE_NAME = "cloud-banqi-v4"`(改殼層檔必 +1) |
+| `sw.js` | Service Worker,`CACHE_NAME = "cloud-banqi-v8"`(改殼層檔必 +1;v8 = 提示不建議白做工的交換) |
 | `manifest.webmanifest` / `icons/` | PWA |
 | `test/daily.mjs` | `npm test`:每日牌組檢查 |
 | `scripts/browser-check.mjs` | 真瀏覽器冒煙檢查 |

@@ -173,6 +173,19 @@ window.__banqi = {
   handleCellClick,
   createInitialState,
   getLegalActions,   // 💡 冒煙要用它驗「提示那一手真的合法」
+  /* 💡 提示品質驗收(test/hint.mjs)用:裁判要能自己走一遍吃子鏈,才算得上獨立。
+     ⚠ 這個物件在檔案第 169 行就求值,而 HINT_LEVEL / HINT_TRADE_MARGIN 是後面才宣告的 const ——
+       直接寫 `HINT_LEVEL,` 會踩 TDZ、整支 app.js 當場拋 ReferenceError(2026-09-07 實際踩過一次:
+       症狀是 window.__banqi 根本不存在、畫面全白)。一律用 getter 延後求值。 */
+  chooseHintAction,
+  chooseAiAction,      // A/B 對照用:比較「舊提示路徑」與 chooseHintAction 的品質差
+  cloneState,
+  applySearchAction,
+  applyActualAction,
+  getPieceAt,
+  get PIECE_META() { return PIECE_META; },
+  get HINT_LEVEL() { return HINT_LEVEL; },
+  get HINT_TRADE_MARGIN() { return HINT_TRADE_MARGIN; },
 };
 
 function bootstrap() {
@@ -781,6 +794,192 @@ function chooseAiAction(targetState) {
   return pool[0].action;
 }
 
+/* ══════════ 💡 提示品質三件套(2026-09-07)══════════
+   使用者退件(先在 3D 幻影西洋棋抓到,全棋類體檢後確認本站也有):
+   「提示叫我吃掉某顆,吃完我又被對手其他棋子吃掉,等於交換被吃」。本站的兩條病因:
+     ① 同分偏好吃子:scored.sort 是穩定排序,平手時就照 orderActionsForSearch 的順序,
+        而那支把吃子(value × 1.2)排在最前面 ⇒ 一堆同分裡永遠是吃子勝出;
+     ② 葉子沒有靜態搜尋 ⇒ 水平線效應(見 minimax 內註解)。
+   修法與西洋棋兩站(3dchess-an v9 / 3dchesscodex v24)、中國象棋站同一條規則:
+     quiesceCaptures(算到底)+ captureGain(子力真的有賺)+ HINT_TRADE_MARGIN(多賺半個兵)。
+   ★ 誠實寫下缺點:少數「換掉對方關鍵防守子」的等價交換也會被跳過,提示因此偏保守——
+     這是為了不教壞初學者刻意付的代價(使用者 2026-09-07 拍板)。 */
+const HINT_QUIESCE_DEPTH = 3;
+const HINT_TRADE_MARGIN = 60;      // 半個兵(兵=120)
+
+/** 只算「已翻開」的子力(暗棋的吃子鏈碰不到蓋著的子,所以蓋著的算 0,差值不受影響) */
+function revealedMaterial(targetState, side) {
+  let score = 0;
+
+  for (const piece of targetState.pieces) {
+    if (piece.captured || !piece.revealed) {
+      continue;
+    }
+    score += (piece.side === side ? 1 : -1) * PIECE_META[piece.type].value;
+  }
+
+  return score;
+}
+
+/** 只走吃子、只看子力,算到沒人想再吃(side 視角,越大越好) */
+function materialQuiesce(targetState, side, alpha, beta, deadline, depth) {
+  const stand = revealedMaterial(targetState, side);
+
+  if (depth <= 0 || performance.now() > deadline) {
+    return stand;
+  }
+
+  const sideToMove = targetState.turnSide;
+  const maximizing = sideToMove === side;
+  let best = stand;
+
+  if (maximizing) {
+    if (best >= beta) return best;
+    if (best > alpha) alpha = best;
+  } else {
+    if (best <= alpha) return best;
+    if (best < beta) beta = best;
+  }
+
+  const caps = getLegalActions(targetState, sideToMove).filter((action) => action.type === "capture");
+
+  if (!caps.length) {
+    return best;
+  }
+
+  for (const action of orderActionsForSearch(targetState, caps, sideToMove, side)) {
+    const next = cloneState(targetState);
+    applySearchAction(next, action);
+    const score = materialQuiesce(next, side, alpha, beta, deadline, depth - 1);
+
+    if (maximizing) {
+      if (score > best) best = score;
+      if (best > alpha) alpha = best;
+    } else {
+      if (score < best) best = score;
+      if (best < beta) beta = best;
+    }
+
+    if (beta <= alpha || performance.now() > deadline) break;
+  }
+
+  return best;
+}
+
+/** 走了這一手吃子之後,把交換算到底,對走棋方的淨子力(>0 賺、=0 等價、<0 虧) */
+function captureGain(targetState, action, side) {
+  const before = revealedMaterial(targetState, side);
+  const next = cloneState(targetState);
+  applySearchAction(next, action);
+  const after = materialQuiesce(next, side, -Infinity, Infinity, performance.now() + 150, HINT_QUIESCE_DEPTH + 2);
+  return after - before;
+}
+
+/** 靜態搜尋:葉子只繼續走吃子(含完整評估),直到局面安靜 */
+function quiesceCaptures(targetState, aiSide, alpha, beta, deadline, depth) {
+  const outcome = detectWinner(targetState);
+
+  if (outcome) {
+    return outcome.side === aiSide ? WIN_SCORE - targetState.turnCount : -WIN_SCORE + targetState.turnCount;
+  }
+
+  const stand = evaluateState(targetState, aiSide);
+
+  if (depth <= 0 || performance.now() > deadline) {
+    return stand;
+  }
+
+  const sideToMove = targetState.turnSide;
+  const maximizing = sideToMove === aiSide;
+  let best = stand;
+
+  if (maximizing) {
+    if (best >= beta) return best;
+    if (best > alpha) alpha = best;
+  } else {
+    if (best <= alpha) return best;
+    if (best < beta) beta = best;
+  }
+
+  const caps = getLegalActions(targetState, sideToMove).filter((action) => action.type === "capture");
+
+  if (!caps.length) {
+    return best;
+  }
+
+  for (const action of orderActionsForSearch(targetState, caps, sideToMove, aiSide)) {
+    const next = cloneState(targetState);
+    applySearchAction(next, action);
+    const score = quiesceCaptures(next, aiSide, alpha, beta, deadline, depth - 1);
+
+    if (maximizing) {
+      if (score > best) best = score;
+      if (best > alpha) alpha = best;
+    } else {
+      if (score < best) best = score;
+      if (best < beta) beta = best;
+    }
+
+    if (beta <= alpha || performance.now() > deadline) break;
+  }
+
+  return best;
+}
+
+/* 💡 提示專用挑手:兩段式。
+   先把「不吃子的手」(移動 + 翻牌)搜完拿到最好的安靜手,再搜吃子 —— 而且吃子要同時過兩關:
+     ① 子力關 captureGain > 0(吃將例外,那是直接贏)
+     ② 分數關 比最好的安靜手多賺 HINT_TRADE_MARGIN
+   贏不過就寧可建議走位。零隨機(HINT_LEVEL 的 randomness=0、topChoices=1 本來就是),
+   所以同一個局面按幾次都給同一手。 */
+function chooseHintAction(targetState) {
+  const side = targetState.aiSide;
+  const level = targetState.hintLevel || HINT_LEVEL;
+  const deadline = performance.now() + level.thinkMs;
+  const all = getLegalActions(targetState, side);
+
+  if (!all.length) {
+    return null;
+  }
+
+  const scoreOf = (action, floor) => {
+    if (action.type === "flip") {
+      // 翻牌翻到什麼是隨機的,搜不下去 —— 沿用 chooseAiAction 的期望值估計
+      return evaluateState(targetState, side) + estimateFlipChoice(targetState, action.index, side, side);
+    }
+    const next = cloneState(targetState);
+    applySearchAction(next, action);
+    return minimax(next, level.depth - 1, side, floor, Infinity, deadline);
+  };
+
+  const quiet = all.filter((action) => action.type !== "capture");
+  const noisyAll = all.filter((action) => action.type === "capture");
+  const winning = noisyAll.filter((action) => {
+    const victim = getPieceAt(action.to, targetState);
+    if (victim && victim.type === "general") return true;      // 吃將=贏,一定要推薦
+    return captureGain(targetState, action, side) > 0;
+  });
+  /* 只有「還有安靜手可退」時才敢把沒賺頭的吃子濾光;不然沒棋可推薦了 */
+  const noisy = (winning.length || quiet.length) ? winning : noisyAll;
+
+  let best = null;
+  let bestScore = -Infinity;
+  for (const action of orderActionsForSearch(targetState, quiet, side, side)) {
+    const score = scoreOf(action, -Infinity);
+    if (score > bestScore) { bestScore = score; best = action; }
+  }
+
+  const floor = best ? bestScore + HINT_TRADE_MARGIN : -Infinity;
+  let bestNoisy = null;
+  let bestNoisyScore = floor;
+  for (const action of orderActionsForSearch(targetState, noisy, side, side)) {
+    const score = scoreOf(action, bestNoisyScore);
+    if (score > bestNoisyScore) { bestNoisyScore = score; bestNoisy = action; }
+  }
+
+  return bestNoisy || best || all[0];
+}
+
 function minimax(targetState, depth, aiSide, alpha, beta, deadline) {
   const outcome = detectWinner(targetState);
   if (outcome) {
@@ -788,7 +987,11 @@ function minimax(targetState, depth, aiSide, alpha, beta, deadline) {
   }
 
   if (depth <= 0 || performance.now() > deadline) {
-    return evaluateState(targetState, aiSide);
+    /* ★ 葉子不可以停在「吃到一半」的局面(2026-09-07 全棋類提示體檢)。
+       深度 3 是奇數層,「我吃 → 他回吃 → 我再吃」到此為止看起來賺,第 4 步他再吃回來看不到
+       (水平線效應)⇒ 提示會叫人做虧本交換。evaluateState 對「被威脅的子」扣 18% 只擋得住一部分。
+       改成:到葉子後只繼續走**吃子**,直到沒得吃為止。 */
+    return quiesceCaptures(targetState, aiSide, alpha, beta, deadline, HINT_QUIESCE_DEPTH);
   }
 
   const sideToMove = targetState.turnSide;
@@ -1402,9 +1605,9 @@ function showHint() {
     const probe = cloneState(state);
     probe.aiSide = state.turnSide;            // 讓搜尋站在「現在該走的這一邊」
     probe.hintLevel = HINT_LEVEL;             // 最深 + 零隨機
-    action = chooseAiAction(probe);
+    action = chooseHintAction(probe);         // ★ 不是 chooseAiAction:提示多兩道「別做白工交換」的關卡
   } catch (error) {
-    console.error("[hint] chooseAiAction threw:", error);
+    console.error("[hint] chooseHintAction threw:", error);
     setHintMessage("💡 這一手算不出來,先自己走走看。");
     return;
   }
