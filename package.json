@@ -8,7 +8,8 @@
   },
   "scripts": {
     "test": "node test/daily.mjs",
-    "test:hint": "node test/hint.mjs"
+    "test:hint": "node test/hint.mjs",
+    "test:fold": "node scripts/check-fold.mjs"
   },
   "repository": {
     "type": "git",

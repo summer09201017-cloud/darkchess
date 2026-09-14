@@ -724,3 +724,48 @@ select[disabled] {
   max-height: min(46vh, 340px); overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
+
+/* ▼ 收起選單(menu-fold v1,2026-09-14)
+   下棋中按狀態卡右邊那顆「▼ 收起選單」⇒ body.menu-folded:
+   藏掉 aside.info-column 三張面板(戰況/暗子資訊/規則摘要)、操作方式卡、標題副標與安裝提示,
+   版面改單欄、棋盤從 32.5rem 放大到 40rem(桌機);手機棋盤本來就撐滿 87vw,不變小、頁面少捲一大段。
+   ★ 棋盤寬度是純 CSS(min(vw, rem)),不用 JS 重算;app.js 切完仍補一發 resize 當保險。
+   ★ 鈕本身在 .status-card,不在被藏的區塊裡 ⇒ 收起來也按得到「▲ 展開選單」。
+   ★ 手機那條 `.board{width:min(87vw,27.8rem)}` 的 87vw 這裡照抄:寫成 82vw 會在 390px 寬的手機把棋盤縮小。 */
+.status-card__row > .status-mini {
+  margin-left: auto;
+}
+
+.menu-fold-button {
+  min-height: 2.75rem;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+body.menu-folded .info-column,
+body.menu-folded .tips,
+body.menu-folded .hero__eyebrow,
+body.menu-folded .hero__lead,
+body.menu-folded .install-hint {
+  display: none;
+}
+
+body.menu-folded .hero,
+body.menu-folded .layout {
+  width: min(58rem, 100%);
+}
+
+body.menu-folded .layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.menu-folded .board {
+  width: min(87vw, 40rem);
+}
+
+/* ⛶ 放大模式 + 收起選單同時開:放大模式的 96vw 留著,上限跟著放到 40rem(index.html 的 immersive 規則寫死 32.5rem)。 */
+body.immersive.menu-folded .board {
+  width: min(96vw, 40rem);
+}

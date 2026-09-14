@@ -29,6 +29,11 @@
   ⚠ `window.__banqi` 裡不可以直接寫後面才宣告的 `const`(TDZ ⇒ 整支 app.js 掛掉、畫面全白),一律用 getter。
 - 📅 **每日同副牌**:今天全世界的暗子擺法都一樣,每天 3 副(2026-08-31)。
 - 360° 視角 / 重設角度、重新開局、安裝到手機(PWA)。
+- ▼ **收起選單**(2026-09-14,sw v10):狀態卡右邊「▼ 收起選單 / ▲ 展開選單」鈕(棋盤正上方,桌機/手機/⛶放大模式都看得到)
+  切 `body.menu-folded`;CSS 藏掉 `aside.info-column` 三張面板(戰況/暗子資訊/規則摘要)、操作方式卡、標題副標與安裝提示,
+  版面改單欄、桌機棋盤 32.5rem → 40rem;手機棋盤本來就撐滿 87vw,不變小、頁面少捲一大段。
+  狀態記 localStorage `cloud-banqi-menu-folded-v1`(讀寫包 try/catch),`aria-expanded` 跟著切;切完補一發 `resize`(棋盤是純 CSS 尺寸,只是保險)。
+  驗收 `npm run test:fold`(`scripts/check-fold.mjs`:真點擊,桌機 1200×800 + 手機直向 390×844,收/展/reload 記得住/零 pageerror)。
 - 規則提醒:暗棋只能走相鄰格(0831 冒煙測試曾因此假紅,已修)。
 
 ## 檔案
@@ -38,16 +43,22 @@
 | `index.html` / `styles.css` | 殼層與版面 |
 | `app.js` | 規則、3D 渲染、AI、提示 |
 | `daily.js` | 每日同副牌 |
-| `sw.js` | Service Worker,`CACHE_NAME = "cloud-banqi-v9"`(改殼層檔必 +1;v8 = 提示不建議白做工的交換、v9 = 版本簡歷可收合(別場 0907 批次)) |
+| `sw.js` | Service Worker,`CACHE_NAME = "cloud-banqi-v10"`(改殼層檔必 +1;v8 = 提示不建議白做工的交換、v9 = 版本簡歷可收合(別場 0907 批次)、v10 = ▼ 收起選單(2026-09-14)) |
 | `manifest.webmanifest` / `icons/` | PWA |
 | `test/daily.mjs` | `npm test`:每日牌組檢查 |
 | `scripts/browser-check.mjs` | 真瀏覽器冒煙檢查 |
+| `scripts/check-fold.mjs` | `npm run test:fold`:▼ 收起選單真點擊驗收(桌機+手機) |
+| `test/hint.mjs` | `npm run test:hint`:💡 提示品質(真瀏覽器,40 個隨機中局) |
 
 ## 跑起來 / 測試
 
 ```bash
 npx serve .            # 或任何靜態伺服器;直接雙擊 index.html 會讓 SW 失效
-npm test               # node test/daily.mjs
+npm test               # node test/daily.mjs(純 node,不用起站)
+py -m http.server 8797 # 下面三支真瀏覽器測試預設打 http://localhost:8797(或 CHECK_URL=線上網址)
+npm run test:hint      # node test/hint.mjs
+npm run test:fold      # node scripts/check-fold.mjs
+node scripts/browser-check.mjs
 ```
 
 ## 部署(手動,push 不會上線)

@@ -2,6 +2,7 @@ const BOARD_COLS = 4;
 const BOARD_ROWS = 8;
 const BOARD_SIZE = BOARD_COLS * BOARD_ROWS;
 const SETTINGS_KEY = "cloud-banqi-settings-v1";
+const MENU_FOLD_KEY = "cloud-banqi-menu-folded-v1";   // ▼ 收起選單的記憶(獨立一鍵,不混進 settings 的形狀;bootstrap 會讀 ⇒ 必須宣告在檔案前段,躲 TDZ)
 const WIN_SCORE = 100000;
 const DEFAULT_VIEW = {
   tilt: 44,
@@ -126,6 +127,7 @@ const elements = {
   captureSummary: document.querySelector("#captureSummary"),
   poolSummary: document.querySelector("#poolSummary"),
   boardHelp: document.querySelector("#boardHelp"),
+  menuFoldButton: document.querySelector("#menuFoldButton"),   // ▼ 收起選單 / ▲ 展開選單(狀態卡那一行)
 };
 
 /* 📱 內建瀏覽器偵測(守門 #30):教會連結走 LINE 發,LINE 的 WebView 裝不了 APP
@@ -186,9 +188,12 @@ window.__banqi = {
   get PIECE_META() { return PIECE_META; },
   get HINT_LEVEL() { return HINT_LEVEL; },
   get HINT_TRADE_MARGIN() { return HINT_TRADE_MARGIN; },
+  applyMenuFold,     // ▼ 收起選單(scripts/check-fold.mjs 只讀狀態、用真點擊切換;這把手留給診斷)
+  get menuFolded() { return document.body.classList.contains("menu-folded"); },
 };
 
 function bootstrap() {
+  applyMenuFold(loadMenuFolded());   // ▼ 上次收起的就先收起來再畫,第一幀就對、不閃
   fillDifficultyOptions();
   bindEvents();
   ensureBoardCells();
@@ -218,6 +223,48 @@ function saveSettings() {
     viewTilt: state.view.tilt,
   };
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(payload));
+}
+
+/* ▼ 收起選單(menu-fold v1,2026-09-14)——下棋中把棋盤旁的三張面板(戰況/暗子資訊/規則摘要)、
+   操作方式卡與標題副標收起來,棋盤拿回整排寬度;再按一次展開。藏什麼、棋盤放多大,全在 styles.css
+   的 body.menu-folded 規則裡,這裡只切 class + 對 aria + 記 localStorage。
+   讀寫都包 try/catch:Safari 私密模式 / 被擋 storage 時記不住就算了,絕不能炸遊戲。
+   棋盤尺寸是純 CSS 算的(width: min(vw, rem)),切換不需 JS 重算;仍補一發 resize 給日後任何聽 resize 的東西。 */
+function loadMenuFolded() {
+  try {
+    return localStorage.getItem(MENU_FOLD_KEY) === "1";
+  } catch (error) {
+    return false;
+  }
+}
+
+function saveMenuFolded(folded) {
+  try {
+    localStorage.setItem(MENU_FOLD_KEY, folded ? "1" : "0");
+  } catch (error) {
+    // 記不住就記不住,這一局照樣能收
+  }
+}
+
+function applyMenuFold(folded, options = {}) {
+  const isFolded = Boolean(folded);
+  document.body.classList.toggle("menu-folded", isFolded);
+  const button = elements.menuFoldButton;
+  if (button) {
+    button.setAttribute("aria-expanded", String(!isFolded));
+    button.textContent = isFolded ? "▲ 展開選單" : "▼ 收起選單";
+    button.title = isFolded ? "把戰況、暗子資訊、規則摘要展開回來" : "收起棋盤旁的面板,棋盤拿到更多空間";
+  }
+  if (options.persist) {
+    saveMenuFolded(isFolded);
+  }
+  requestAnimationFrame(() => {
+    try {
+      window.dispatchEvent(new Event("resize"));
+    } catch (error) {
+      // 沒人聽也無妨
+    }
+  });
 }
 
 function createInitialState(settings = {}) {
@@ -340,6 +387,13 @@ function bindEvents() {
   elements.resetViewButton.addEventListener("click", () => {
     resetBoardView();
   });
+
+  // ▼ 收起選單 / ▲ 展開選單:切 body.menu-folded(CSS 藏面板、棋盤拿回空間),按的那一下才寫 localStorage
+  if (elements.menuFoldButton) {
+    elements.menuFoldButton.addEventListener("click", () => {
+      applyMenuFold(!document.body.classList.contains("menu-folded"), { persist: true });
+    });
+  }
 
   elements.installButton.addEventListener("click", async () => {
     if (!state.installPrompt) {
