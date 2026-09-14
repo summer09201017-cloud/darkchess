@@ -43,7 +43,7 @@
 | `index.html` / `styles.css` | 殼層與版面 |
 | `app.js` | 規則、3D 渲染、AI、提示 |
 | `daily.js` | 每日同副牌 |
-| `sw.js` | Service Worker,`CACHE_NAME = "cloud-banqi-v10"`(改殼層檔必 +1;v8 = 提示不建議白做工的交換、v9 = 版本簡歷可收合(別場 0907 批次)、v10 = ▼ 收起選單(2026-09-14)) |
+| `sw.js` | Service Worker,`CACHE_NAME = "cloud-banqi-v12"`(改殼層檔必 +1;**名單/退路不可有 index.html,只認 `./`**;v8 = 提示不建議白做工的交換、v9 = 版本簡歷可收合(別場 0907 批次)、v10 = ▼ 收起選單(2026-09-14)) |
 | `manifest.webmanifest` / `icons/` | PWA |
 | `test/daily.mjs` | `npm test`:每日牌組檢查 |
 | `scripts/browser-check.mjs` | 真瀏覽器冒煙檢查 |
@@ -70,10 +70,15 @@ curl -s "https://darkchesscodex.pages.dev/sw.js?b=$RANDOM" | grep CACHE_NAME   #
 
 改了殼層檔先把 `sw.js` 的 `CACHE_NAME` 版本 +1 再部署,否則已安裝的 PWA 永遠看到舊版。
 
+⚠ **SW 快取名單與離線退路不可以有 `index.html`(0914 全艦隊修,sw v12)**:Cloudflare Pages 把 `/index.html` 308 到 `/`,
+名單裡有它 install 就存到 redirected 回應,裝成 App 打開就 ERR_FAILED(3D-Chess 幻影版實錘)。一律只認 `./`;install 逐一 add+catch 不用 addAll。
+補丁來源:skill `static-pwa-ship/patches/patch-sw-index.mjs`;線上重演 `scripts/check-sw-nav-fleet.mjs <url>` 要 🟢。
+
 ## 帳本
 
 作品集已收、`sites.json` 棋類已登。新功能上線後照 skill `portfolio-ledger-guard` 收尾。
 
+- ✅ **拔掉「index.html 進 SW 快取名單」地雷(0914 全艦隊,verTag v10 / sw v12)**:`APP_ASSETS` 拔 `./index.html`、退路 `caches.match("./")` 只給導覽請求、`addAll` → 逐一 `add().catch()`;線上 `check-sw-nav-fleet.mjs` 🟢(開 /index.html 兩次不 ERR_FAILED、快取無 redirected、離線回殼層)。見「部署」段的 ⚠。
 - ✅ **⛶ 放大真的放大 + 桌機 ⛶ + 手機橫向自動滿版(0914,v9 / sw v11)**:`body.fit-play`(app.js `syncFitPlay`/`fitBoard`/`bindFitPlay`,styles.css 檔尾)—— 沉浸或手機橫向時整頁一屏,棋盤用所有子孫的投影框聯集逐步縮放到剛好裝進 `.board-card`(`--fit-board-w` + `--fit-shift`);`#mfsExit` 是看得見的出口(同一個 toggle);「☰ 選單」= `body.panels-open` 暫回一般版面。驗:`CHECK_URL=… node scripts/check-fit.mjs`(本機預設 8797)。
 
 ---
