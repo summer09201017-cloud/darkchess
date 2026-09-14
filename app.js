@@ -3,6 +3,9 @@ const BOARD_ROWS = 8;
 const BOARD_SIZE = BOARD_COLS * BOARD_ROWS;
 const SETTINGS_KEY = "cloud-banqi-settings-v1";
 const MENU_FOLD_KEY = "cloud-banqi-menu-folded-v1";   // ▼ 收起選單的記憶(獨立一鍵,不混進 settings 的形狀;bootstrap 會讀 ⇒ 必須宣告在檔案前段,躲 TDZ)
+// fit-play(v9)的 media query 與 MENU_FOLD_KEY 同理:bootstrap() 在檔案前段就跑 ⇒ 這兩個 const 必須宣告在它之前,否則 TDZ(0914 第一版就炸在這)
+const FIT_PLAY_QUERY = "(orientation: landscape) and (max-height: 500px)";
+const fitPlayMedia = typeof matchMedia === "function" ? matchMedia(FIT_PLAY_QUERY) : null;
 const WIN_SCORE = 100000;
 const DEFAULT_VIEW = {
   tilt: 44,
@@ -200,6 +203,7 @@ function bootstrap() {
   ensureSummaryCards();
   syncControls();
   render({ fullBoard: true });
+  bindFitPlay();   // ⛶ fit-play(v9):要在第一次 render 之後接,棋盤格子都在了才量得到投影框
   updateInstallHint();
   registerServiceWorker();
   /* 🔗 ?daily 深連結(0906,信友火花「今日挑戰」卡直達):等於代按「📅 每日同副牌」(daily.js 在 app.js 之前載,window.BanqiDaily 已在)。 */
@@ -475,6 +479,102 @@ function renderBoardView() {
   elements.boardHelp.textContent = state.perspective === "angled"
     ? "拖曳棋盤可 360 度旋轉，垂直拖曳可調整俯角。"
     : "切回 360° 視角後，就能拖曳旋轉棋盤。";
+  fitBoard();
+  setTimeout(fitBoard, 360);   // .board 的 transform 有 320ms transition,量太早會拿到過渡中的投影框
+  setTimeout(fitBoard, 800);   // 進真全螢幕時瀏覽器還會再重排一輪(3d-chess-co 0914 實測 600ms 才穩)
+}
+
+/* ⛶ fit-play「玩的版面」(v9,2026-09-14;跟 3d-chess-co v27 同一套)。CSS 在 styles.css 檔尾;這裡管三件事:
+   ① 什麼時候開:沉浸(index.html mfs 段切的 body.immersive)或 手機橫向(FIT_PLAY_QUERY,跟 styles.css 那條一字不差)
+   ② 棋盤放多大:fitBoard() 用棋盤所有子孫的投影框聯集(getBoundingClientRect 含 rotateX/rotateZ/透視)逐步縮放到剛好裝進 .board-card,
+      投影框重心會往下偏 ⇒ 再用 --fit-shift 移回卡片中心
+   ③ 「☰ 選單」:body.panels-open 暫時回一般版面看模式/AI 強度那張卡 */
+function fitPlayActive() {
+  return document.body.classList.contains("fit-play") && !document.body.classList.contains("panels-open");
+}
+function fitBoard() {
+  const wrap = document.querySelector(".board-card");
+  const board = elements.board;
+  const stage = elements.boardStage;
+  if (!wrap || !board || !stage) return;
+  if (!fitPlayActive()) {
+    board.style.removeProperty("--fit-board-w");
+    stage.style.removeProperty("--fit-shift-x");
+    stage.style.removeProperty("--fit-shift-y");
+    return;
+  }
+  const PAD = 6;
+  const wrapR = wrap.getBoundingClientRect();
+  const availW = wrap.clientWidth - PAD * 2;
+  const availH = wrap.clientHeight - PAD * 2;
+  if (availW < 80 || availH < 80) return;
+  const bbox = () => {
+    const r = board.getBoundingClientRect();
+    let x0 = r.left, y0 = r.top, x1 = r.right, y1 = r.bottom;
+    for (const el of board.querySelectorAll("*")) {
+      const q = el.getBoundingClientRect();
+      if (!q.width) continue;
+      if (q.left < x0) x0 = q.left; if (q.top < y0) y0 = q.top; if (q.right > x1) x1 = q.right; if (q.bottom > y1) y1 = q.bottom;
+    }
+    return { x0, y0, w: x1 - x0, h: y1 - y0 };
+  };
+  stage.style.setProperty("--fit-shift-x", "0px");
+  stage.style.setProperty("--fit-shift-y", "0px");
+  let w = Math.min(availW, availH);
+  for (let i = 0; i < 5; i++) {
+    board.style.setProperty("--fit-board-w", `${Math.floor(w)}px`);
+    const b = bbox();
+    if (!b.w || !b.h) return;
+    const s = Math.min(availW / b.w, availH / b.h);
+    if (s >= 0.985 && s <= 1.01) break;
+    w = Math.max(100, w * Math.min(s, 1.6));
+  }
+  for (let i = 0; i < 2; i++) {
+    const b = bbox();
+    const dx = (wrapR.left + wrapR.width / 2) - (b.x0 + b.w / 2);
+    const dy = (wrapR.top + wrapR.height / 2) - (b.y0 + b.h / 2);
+    const curX = parseFloat(stage.style.getPropertyValue("--fit-shift-x")) || 0;
+    const curY = parseFloat(stage.style.getPropertyValue("--fit-shift-y")) || 0;
+    stage.style.setProperty("--fit-shift-x", `${Math.round(curX + dx)}px`);
+    stage.style.setProperty("--fit-shift-y", `${Math.round(curY + dy)}px`);
+    const c = bbox();
+    const over = Math.max(c.w / availW, c.h / availH);
+    if (over <= 1.005) break;
+    w = Math.max(100, w / over * 0.99);
+    board.style.setProperty("--fit-board-w", `${Math.floor(w)}px`);
+  }
+}
+function syncFitPlay() {
+  const on = document.body.classList.contains("immersive") || Boolean(fitPlayMedia && fitPlayMedia.matches);
+  document.body.classList.toggle("fit-play", on);
+  if (!on) document.body.classList.remove("panels-open");
+  const btn = document.querySelector("#playMenuButton");
+  if (btn) {
+    const open = document.body.classList.contains("panels-open");
+    btn.textContent = open ? "✕ 收合選單" : "☰ 選單";
+    btn.setAttribute("aria-expanded", String(open));
+  }
+  fitBoard();
+}
+function bindFitPlay() {
+  if (fitPlayMedia) {
+    if (fitPlayMedia.addEventListener) fitPlayMedia.addEventListener("change", syncFitPlay);
+    else if (fitPlayMedia.addListener) fitPlayMedia.addListener(syncFitPlay);
+  }
+  window.addEventListener("resize", () => requestAnimationFrame(syncFitPlay));
+  new MutationObserver(() => {
+    const on = document.body.classList.contains("immersive") || Boolean(fitPlayMedia && fitPlayMedia.matches);
+    if (on !== document.body.classList.contains("fit-play")) syncFitPlay(); else fitBoard();
+  }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+  const btn = document.querySelector("#playMenuButton");
+  if (btn) {
+    btn.addEventListener("click", () => {
+      document.body.classList.toggle("panels-open");
+      syncFitPlay();
+      window.scrollTo(0, 0);
+    });
+  }
+  syncFitPlay();
 }
 
 function handleBoardPointerDown(event) {

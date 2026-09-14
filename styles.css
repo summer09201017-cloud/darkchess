@@ -769,3 +769,57 @@ body.menu-folded .board {
 body.immersive.menu-folded .board {
   width: min(96vw, 40rem);
 }
+
+/* ⛶ 「玩的版面」fit-play(v9,2026-09-14;跟 3d-chess-co v27 同一套做法)
+   由來:0914 全艦隊棋類體檢——本站按了「放大」只藏 hero,棋盤在 y=760/844(直向)、y=584/390(橫向),整個在畫面外。
+   做法:body.fit-play(app.js 在 沉浸 或 手機橫向 時套上)⇒ 整頁一屏(100dvh、不捲),藏 hero / 控制卡 / 操作方式 / 側欄 / 簡歷,
+     .game-column 變 grid:狀態卡一行在上、棋盤卡吃掉剩下的高度;橫向矮螢幕時狀態卡改成右欄 200px,棋盤吃滿整個高度。
+   ★ 棋盤放多大是 app.js fitBoard() 量出來的:用棋盤所有子孫的投影框聯集(含 rotateX/rotateZ/透視)逐步縮放到剛好裝進棋盤卡,
+     寫進 --fit-board-w;投影框重心會往下偏,再用 --fit-shift 把它移回卡片中心。
+   ★ body.panels-open(「☰ 選單」鈕)= 暫時回一般長頁版面看模式/AI 強度那張卡;fit-play class 仍在,鈕才看得到。 */
+.play-only { display: none; }
+body.fit-play .play-only { display: inline-flex; align-items: center; justify-content: center; }
+body.fit-play:not(.panels-open) { height: 100dvh; overflow: hidden; }
+body.fit-play:not(.panels-open) .app-shell {
+  min-height: 0; height: 100dvh; box-sizing: border-box; display: flex; flex-direction: column;
+  padding: max(6px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left));
+}
+body.fit-play:not(.panels-open) .hero,
+body.fit-play:not(.panels-open) .control-bar,
+body.fit-play:not(.panels-open) .tips,
+body.fit-play:not(.panels-open) .info-column,
+body.fit-play:not(.panels-open) .ver-fold,
+body.fit-play:not(.panels-open) .install-hint,
+body.fit-play:not(.panels-open) .board-help,
+body.fit-play:not(.panels-open) .menu-fold-button:not(.play-only),
+body.fit-play:not(.panels-open) .board-stage__halo,
+body.fit-play:not(.panels-open) .board-stage__platform { display: none !important; }
+body.fit-play:not(.panels-open) .layout { display: block; flex: 1 1 auto; min-height: 0; width: 100%; margin: 0; }
+body.fit-play:not(.panels-open) .game-column {
+  height: 100%; display: grid; gap: 6px;
+  grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
+}
+body.fit-play:not(.panels-open) .status-card { padding: 4px 10px; }
+body.fit-play:not(.panels-open) .status-card__row { padding-right: 140px; }   /* 右上角固定的 ✕ 離開(~120px)會蓋到「暗子 32 · 空格 0」,讓位 */
+body.fit-play:not(.panels-open) .status-card__headline { margin: 2px 0; font-size: 0.95rem; }
+body.fit-play:not(.panels-open) .status-card__foot { font-size: 0.8rem; }
+body.fit-play:not(.panels-open) .board-card {
+  min-height: 0; height: 100%; box-sizing: border-box; padding: 6px; overflow: hidden;
+  display: grid; place-items: center;
+}
+body.fit-play:not(.panels-open) .board-stage {
+  width: 100%; height: 100%; padding: 0; display: grid; place-items: center;
+  transform: translate(var(--fit-shift-x, 0px), var(--fit-shift-y, 0px));
+}
+body.fit-play:not(.panels-open) .board { width: var(--fit-board-w, min(96vw, 32.5rem)); max-width: 100%; margin: 0 auto; }
+/* 橫向矮螢幕(真手機橫向):棋盤左、狀態卡右欄;右欄頂端讓出 ⛶ / ✕ 的位子 */
+@media (orientation: landscape) and (max-height: 500px) {
+  body.fit-play:not(.panels-open) .game-column { grid-template-columns: minmax(0, 1fr) 200px; grid-template-rows: minmax(0, 1fr); }
+  body.fit-play:not(.panels-open) .board-card { grid-column: 1; grid-row: 1; }
+  body.fit-play:not(.panels-open) .status-card { grid-column: 2; grid-row: 1; padding-top: 52px; overflow-y: auto; min-height: 0; }
+  body.fit-play:not(.panels-open) .status-card__row { flex-direction: column; align-items: stretch; gap: 6px; padding-right: 0; }   /* 橫向右欄已用 padding-top 讓位,不用再讓右邊 */
+  body.fit-play:not(.panels-open) .status-card__row > .status-mini,
+  body.fit-play:not(.panels-open) .menu-fold-button { margin-left: 0; }
+}
+/* 桌機也有右上角固定的 ⛶ 了(42px):標題列右邊讓出位子 */
+.hero { padding-right: 64px; }
