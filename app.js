@@ -149,6 +149,9 @@ const IN_APP_BROWSER = (() => {
 })();
 
 let state = createInitialState(loadSettings());
+/* 🐾 動物對手(0928,skill animal-opponent-kit):引擎 js/animals.js 是 ES module,經 index.html 的 PetKit 橋接進來;
+   pet 在 initPet() 才建(橋接還沒好就等 pet-kit-ready)。⚠ 跟 MENU_FOLD_KEY 同理:宣告要在 bootstrap() 之前(TDZ)。 */
+let pet = null;
 const dragState = {
   active: false,
   moved: false,
@@ -193,7 +196,114 @@ window.__banqi = {
   get HINT_TRADE_MARGIN() { return HINT_TRADE_MARGIN; },
   applyMenuFold,     // ▼ 收起選單(scripts/check-fold.mjs 只讀狀態、用真點擊切換;這把手留給診斷)
   get menuFolded() { return document.body.classList.contains("menu-folded"); },
+  get pet() { return pet; },   // 🐾 動物對手(browser-check 🐾 段用;沒橋接成功就是 null)
 };
+
+/* ═══════════ 🐾 動物對手(2026-09-28,skill animal-opponent-kit;正本 majiang3d、範本 gomoku3d、老站範式 3D-Xiangqi)═══════════
+   本站棋盤是 CSS 斜視(DOM + rotateX),沒有 three 場景 ⇒ 牠住在 .board-card 裡一個透明的 WebGL 小窗(#petWindow,js/opponent.js),
+   petLayout() 量棋盤投影框(getBoundingClientRect 含 rotateX/rotateZ/透視)把小窗貼在**遠端那條邊上方、置中**,pointer-events:none。
+   一般版面:卡片頂端多留 --pet-reserve 讓位(styles.css);fit-play 版面:fitBoard() 從可用高度扣 petReserve()(卡片矮於 480 就藏,不縮棋盤)。
+   反應跟 AI 流程同一個分岔:AI 開算 think / 翻到自己的子 hop(對方的 shrug)/ 吃你的子 hop+「吃掉了」/ 走位 place / 你吃牠的子 gasp+「哇」/
+   一局結束 win・lose(每局一次);等你太久閒聊。純觀感:不碰規則、不碰 AI、不擋點擊。 */
+function initPet() {
+  const build = () => {
+    const PK = window.PetKit;
+    const win = document.querySelector("#petWindow");
+    if (!PK || !win || pet) return;
+    try {
+      const voice = PK.createVoice({ muted: () => false });   // 這站沒有 🔊 音效開關 ⇒ 只看 🐾 三段
+      pet = new PK.Opponent(win, voice);
+    } catch (error) {
+      console.warn("🐾 動物對手建不起來(沒 WebGL?),棋照下", error);
+      return;
+    }
+    pet.onTick = petLayout;   // 每 ~250ms 重量棋盤投影框(拖曳旋轉 / 過渡動畫時小窗要跟著)
+    document.querySelectorAll("#petControls [data-pet]").forEach((button) => {
+      button.addEventListener("click", () => { pet.setMode(button.dataset.pet); syncPet(); renderStatus(); });
+    });
+    document.addEventListener("pointerdown", () => pet.noteInput(), true);
+    document.addEventListener("keydown", () => pet.noteInput(), true);
+    window.addEventListener("resize", () => requestAnimationFrame(petLayout));
+    seatPet();
+  };
+  if (window.PetKit) build();
+  else window.addEventListener("pet-kit-ready", build, { once: true });
+}
+/** 每局開始 / 換難度:誰坐由模式 + 難度 + 每日決定(雙人同機不坐、每日 = 🦉) */
+function seatPet() {
+  if (!pet || !window.PetKit) return;
+  pet.seat(window.PetKit.animalFor(state.mode, state.difficulty, Boolean(state.dailyKey)));
+  syncPet();
+  renderStatus();
+}
+/** 每次 render:告訴牠是不是在等你、三段鈕亮哪顆、body.pet-on、重擺小窗 */
+function syncPet() {
+  if (!pet) return;
+  const waiting = state.mode === "ai" && !state.winner && !state.aiThinking
+    && (state.turnSide === null || state.turnSide === state.humanSide);
+  pet.setWaiting(waiting);
+  document.querySelectorAll("#petControls [data-pet]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.pet === pet.mode));
+  });
+  document.body.classList.toggle("pet-on", pet.on);
+  petLayout();
+}
+/** fit-play 時從 .board-card 頂端留給小窗的高度(px);卡片矮於 480 就 0(藏起來、棋盤不縮) */
+function petReserve() {
+  if (!pet || !pet.on || !fitPlayActive()) return 0;
+  const wrap = document.querySelector(".board-card");
+  if (!wrap || wrap.clientHeight < 480) return 0;
+  return Math.round(clamp(wrap.clientHeight * 0.2, 90, 170));
+}
+/** 把小窗貼在棋盤投影框的遠端那條邊上方、置中(頁面 px → 相對 .board-card) */
+function petLayout() {
+  if (!pet) return;
+  const wrap = document.querySelector(".board-card");
+  if (!wrap) return;
+  if (!pet.on) { wrap.style.setProperty("--pet-reserve", "0px"); pet.hide(); return; }
+  const OVERLAP = 8;   // 凳子壓到棋盤木框 8px(木框 ≥ 10px、格子在更裡面),看起來是坐在桌邊,不蓋任何格子
+  let petW, petH;
+  if (fitPlayActive()) {
+    const reserve = petReserve();
+    if (!reserve) { pet.hide(); return; }
+    petH = reserve - 2 + OVERLAP;
+    petW = Math.round(petH / 1.25);
+  } else {
+    const bw = elements.board.getBoundingClientRect().width;
+    if (!bw) { pet.hide(); return; }
+    petW = clamp(Math.round(bw * 0.28), 96, 200);
+    petH = Math.round(petW * 1.25);
+    wrap.style.setProperty("--pet-reserve", `${petH - OVERLAP + 2}px`);   // 設完馬上重量:padding 沒有 transition,同步就生效
+  }
+  const b = elements.board.getBoundingClientRect();
+  const wr = wrap.getBoundingClientRect();
+  if (!b.width || !wr.width) { pet.hide(); return; }
+  /* 小窗的底:壓到木框 OVERLAP px 可以,但**不可以壓到任何一格**(遠端那排格子的投影框最高點再往上 2px;
+     直向手機木框只有 ~10px、格子的投影框會貼到木框邊,只看木框會蓋到半格 —— browser-check 🐾 抓到的)。 */
+  let cellsTop = Infinity;
+  for (const cell of elements.board.querySelectorAll(".cell")) { const r = cell.getBoundingClientRect(); if (r.width && r.top < cellsTop) cellsTop = r.top; }
+  const bottom = Math.min(b.top + OVERLAP, Number.isFinite(cellsTop) ? cellsTop - 2 : Infinity);
+  const left = (b.left + b.width / 2) - wr.left - petW / 2;
+  const top = bottom - wr.top - petH;
+  pet.place({ left, top: Math.max(0, top), width: petW, height: petH });
+}
+/** 牠走完一手(runAiTurn):翻 / 吃 / 走位各自的反應 */
+function petAfterAiAction(action) {
+  if (!pet || !pet.kind || !action) return;
+  if (action.type === "flip") {
+    const piece = getPieceAt(action.index);
+    pet.flipped(Boolean(piece) && piece.side === state.aiSide);
+  } else if (action.type === "capture") {
+    pet.react("hop", "capture");
+  } else {
+    pet.react("place", null);
+  }
+}
+/** 一局分出結果(finalizeAfterAction / runAiTurn 無合法手):牠贏了跳、輸了低頭,每局一次 */
+function petEndGame() {
+  if (!pet || !pet.kind || !state.winner) return;
+  pet.endGame(state.mode === "ai" && state.winner === state.aiSide);
+}
 
 function bootstrap() {
   applyMenuFold(loadMenuFolded());   // ▼ 上次收起的就先收起來再畫,第一幀就對、不閃
@@ -204,6 +314,7 @@ function bootstrap() {
   syncControls();
   render({ fullBoard: true });
   bindFitPlay();   // ⛶ fit-play(v9):要在第一次 render 之後接,棋盤格子都在了才量得到投影框
+  initPet();       // 🐾 動物對手(0928):橋接好了就坐下;沒橋接(舊瀏覽器)= 沒動物,棋照下
   updateInstallHint();
   registerServiceWorker();
   /* 🔗 ?daily 深連結(0906,信友火花「今日挑戰」卡直達):等於代按「📅 每日同副牌」(daily.js 在 app.js 之前載,window.BanqiDaily 已在)。 */
@@ -379,6 +490,7 @@ function bindEvents() {
     state.difficulty = elements.difficultySelect.value;
     saveSettings();
     renderStatus();
+    seatPet();   // 🐾 換難度就換動物(這局的 AI 也是馬上換檔)
   });
 
   elements.perspectiveButton.addEventListener("click", () => {
@@ -504,9 +616,10 @@ function fitBoard() {
     return;
   }
   const PAD = 6;
+  const reserve = petReserve();   // 🐾 動物小窗的位子從頂端留出來(放不下 = 0,跟以前完全一樣)
   const wrapR = wrap.getBoundingClientRect();
   const availW = wrap.clientWidth - PAD * 2;
-  const availH = wrap.clientHeight - PAD * 2;
+  const availH = wrap.clientHeight - PAD * 2 - reserve;
   if (availW < 80 || availH < 80) return;
   const bbox = () => {
     const r = board.getBoundingClientRect();
@@ -532,7 +645,7 @@ function fitBoard() {
   for (let i = 0; i < 2; i++) {
     const b = bbox();
     const dx = (wrapR.left + wrapR.width / 2) - (b.x0 + b.w / 2);
-    const dy = (wrapR.top + wrapR.height / 2) - (b.y0 + b.h / 2);
+    const dy = (wrapR.top + PAD + reserve + availH / 2) - (b.y0 + b.h / 2);   // 🐾 reserve 0 時 = 卡片正中,跟以前一樣
     const curX = parseFloat(stage.style.getPropertyValue("--fit-shift-x")) || 0;
     const curY = parseFloat(stage.style.getPropertyValue("--fit-shift-y")) || 0;
     stage.style.setProperty("--fit-shift-x", `${Math.round(curX + dx)}px`);
@@ -671,6 +784,7 @@ function startNewGame(message, options = {}) {
   saveSettings();
   syncControls();
   render({ fullBoard: true });
+  seatPet();   // 🐾 每局重坐(模式 / 難度 / 每日 決定誰坐)
 }
 
 /* ══════════ 📅 每日同副牌 ══════════
@@ -776,6 +890,7 @@ function performAction(action, actor) {
   clearSelection();
   applyActualAction(state, action, actor);
   state.turnCount += 1;
+  if (actor === "human" && action.type === "capture" && pet) pet.react("gasp", "wow");   // 🐾 你吃了牠的子:「哇」
   finalizeAfterAction(actor);
   render();
 }
@@ -830,12 +945,14 @@ function finalizeAfterAction() {
     state.aiThinking = false;
     state.message = outcome.message;
     scoreDailyIfWon();   // 📅 每日同副牌:贏了就記今天最少回合(會蓋掉 message)
+    petEndGame();        // 🐾 牠贏了跳、輸了低頭(每局一次)
     return;
   }
 
   if (state.mode === "ai" && state.aiSide && state.turnSide === state.aiSide) {
     state.aiThinking = true;
     renderStatus();
+    if (pet) pet.think();   // 🐾 手托腮想棋(人聲每三手一次)
     window.setTimeout(runAiTurn, 220);
   } else {
     state.aiThinking = false;
@@ -889,6 +1006,7 @@ function runAiTurn() {
     state.winner = winner;
     state.message = "AI 無合法手，這局由你拿下。";
     scoreDailyIfWon();   // 📅 這條也是「贏」的其中一條路,別漏記(#32 守門存在不等於會攔的同型)
+    petEndGame();        // 🐾 這條也是「你贏」
     render();
     return;
   }
@@ -896,6 +1014,7 @@ function runAiTurn() {
   applyActualAction(state, action);
   state.turnCount += 1;
   state.aiThinking = false;
+  petAfterAiAction(action);   // 🐾 翻 / 吃 / 走位的反應(要在 finalize 之前:結束那一手由 petEndGame 蓋過去)
   finalizeAfterAction();
   render();
 }
@@ -1556,6 +1675,7 @@ function render(options = {}) {
   renderStatus();
   renderCaptureSummary();
   renderPoolSummary();
+  syncPet();   // 🐾 等你 / 鈕 / 小窗位子
 }
 
 function renderBoard(forceFull = false) {
@@ -1885,7 +2005,7 @@ function renderStatus() {
         : `${SIDE_LABEL[state.winner]}獲勝`;
     elements.statusTurn.textContent = winnerLabel;
   } else if (state.aiThinking) {
-    elements.statusTurn.textContent = "AI 思考中";
+    elements.statusTurn.textContent = `${pet && pet.on ? pet.emoji + " " : ""}AI 思考中`;   // 🐾 帶牠的臉
   } else if (state.turnSide) {
     elements.statusTurn.textContent = `輪到${SIDE_LABEL[state.turnSide]}`;
   } else {
@@ -1900,7 +2020,8 @@ function renderStatus() {
 
   if (state.mode === "ai") {
     if (state.humanSide) {
-      elements.statusSide.textContent = `你執${SIDE_CHAR[state.humanSide]}，AI 執${SIDE_CHAR[state.aiSide]}。`;
+      const aiName = pet && pet.on ? `${pet.emoji} ${pet.name}(AI)` : "AI";   // 🐾 對手是誰就寫誰,孩子知道「輸給的是牠」
+      elements.statusSide.textContent = `你執${SIDE_CHAR[state.humanSide]}，${aiName}執${SIDE_CHAR[state.aiSide]}。`;
     } else {
       elements.statusSide.textContent = "尚未定邊，先翻到哪一色就執哪一色。";
     }

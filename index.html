@@ -76,6 +76,16 @@ body.immersive .board{width:min(96vw,32.5rem)} body.immersive .layout{width:100%
               <button class="button button--ghost" id="resetViewButton" type="button">重設角度</button>
             </div>
           </div>
+
+          <!-- 🐾 對手動物三段(0928):對面坐一隻會眨眼、會想棋、會說話的小動物;純觀感,不影響棋力。記 localStorage(banqi-pet)。 -->
+          <div class="field field--buttons pet-field" id="petField">
+            <span>🐾 對手動物(休閒 🐰・標準 🐱・高手 🐻;每日 🦉)</span>
+            <div class="view-controls pet-controls" id="petControls" role="group" aria-label="對手動物">
+              <button class="button button--ghost" type="button" data-pet="voice" aria-pressed="false">坐對面,會說話</button>
+              <button class="button button--ghost" type="button" data-pet="mute" aria-pressed="false">坐對面,不出聲</button>
+              <button class="button button--ghost" type="button" data-pet="off" aria-pressed="false">關</button>
+            </div>
+          </div>
         </div>
 
         <section class="status-card card" aria-live="polite">
@@ -97,14 +107,19 @@ body.immersive .board{width:min(96vw,32.5rem)} body.immersive .layout{width:100%
                由來:簡歷越寫越長(撞球 1202 字),裸放在選單底會把上面的鈕擠出畫面(使用者 0907 實玩回報)。
                ★ summary 那行仍寫著版本與日期 ⇒ 收起來也看得到「我開到的是哪一版」,不是把版號藏掉。 -->
           <details class="ver-fold">
-            <summary>版本 v10(2026-09-14)・看看前幾版做了什麼</summary>
-            <p class="status-card__foot" id="verTag" style="font-size:12px;opacity:.72;line-height:1.6">版本 v10(2026-09-14)・🩹 <b>修好「裝成 App 打開就無法連上」的隱藏地雷</b>(姊妹站 3D 西洋棋幻影版在手機上實機踩到 ERR_FAILED,查出病根後六款棋類站一起修)。網站主機會把 index.html 這個網址自動轉到首頁「/」,而 App 的離線快取名單裡偏偏列著 index.html ⇒ 存進去的是「被轉址過」的一份,從主畫面開 App 時瀏覽器拒收它、直接顯示無法連上;更麻煩的是每次更新版本都會重踩一次。現在快取名單與離線退路一律只認首頁、不再碰 index.html;另外安裝時改成一個檔一個檔存(以前只要有一個檔抓不到,整批都不存),已裝的 App 拿到這一版之後就不會再遇到。<br>前幾版:v9 ⛶ <b>放大真的會放大了,電腦版也有 ⛶</b>(2026-09-14)——以前右上角那顆「放大」只是把標題藏掉,棋盤還在頁面下面要往下捲才看得到(手機橫向整個在畫面外)。現在按下去整頁變成一屏:棋盤縱橫貼滿螢幕、戰況那一行排在旁邊,不用捲;手機轉橫向會自動變成這個版面(不用再按 ⛶),想換模式或 AI 強度就按「☰ 選單」叫回設定。右上角多一顆看得見的「✕ 離開全螢幕」;電腦版以前完全沒有 ⛶(只在觸控裝置顯示),現在也有了。<br>前幾版:v8 ▼ <b>選單可以收起來了</b>——狀態卡右邊多一顆「▼ 收起選單」:下棋時按一下,棋盤旁邊的「戰況/暗子資訊/規則摘要」三張卡和「操作方式」就收起來,電腦上棋盤放大到整排寬度、手機上不用再往下捲過一大段;再按一次「▲ 展開選單」就回來。會記住你的選擇,下次開還是同一個樣子。<br>前幾版:v7 🏷 <b>版本與簡歷可以收起來了</b>——這一段預設是收合的,點標題那行才展開;展開後最高只佔半個畫面並且可以捲,不會再把上面的選單擠出畫面。收合時標題那行仍寫著版本與日期,一眼就知道自己開到的是哪一版(2026-09-07)・v6 🎯 <b>提示不再叫你做「白做工的交換」</b>——以前提示常建議吃一顆、吃完就被對方別的子吃回,什麼都沒賺(病因:同分時吃子排最前面;而且只往前看 3 步,第 4 步被吃回看不到)。現在:吃子那條線會算到「沒人想再吃」為止,子力真的有賺、而且比最好的走位手多賺半個兵,才會建議吃,否則建議走位或翻牌。實測 60 個局面:舊版 42 手建議吃子裡 4 手是白做工,新版 32 手裡 0 手,而且更快(最慢 618ms → 147ms)。前幾版:v5 ⛶ 手機放大鈕——右上角一顆放大鈕:收掉上方標題區、棋盤放到 96% 螢幕寬;Android 會連瀏覽器網址列一起收掉,iPhone 不支援網頁全螢幕也照樣放得大;再按一次縮回(2026-09-07)・v4 🔗 網址加 ?daily 直接開每日同副牌(信友火花「今日挑戰」卡點了就進今天的牌,不用再按每日鈕)(2026-09-06)・v3 📅 每日同副牌升級成每天 3 副牌——全世界的暗子擺法都一樣,運氣拉平、比誰用最少回合贏,每副分開記成績(2026-08-31)・v2 每日同副牌(單副)・v1 雲臺暗棋 3D PWA(對 AI 三檔/雙人同機/360° 視角)</p>
+            <summary>版本 v11(2026-09-28)・看看前幾版做了什麼</summary>
+            <p class="status-card__foot" id="verTag" style="font-size:12px;opacity:.72;line-height:1.6">版本 v11(2026-09-28)・🐾 <b>動物對手坐到棋盤對面</b>:對戰 AI 時,棋盤遠端上方坐著一隻會眨眼、會想棋、會說話的小動物——休閒 🐰 白兔、標準 🐱 橘貓、高手 🐻 棕熊,每日同副牌由 🦉 貓頭鷹陪你。牠翻到自己的子會跳一下、吃掉你的子會喊「吃掉了!」、被你吃子會「哇」一聲,贏了跳、輸了低頭,等你太久還會催你;設定列多一組「🐾 對手動物」可以選「會說話 / 不出聲 / 關」。純觀感、不影響棋力、不擋任何點擊;手機橫向的放大版面放不下就先收起來(跟 3D 麻將、3D 五子棋、3D 象棋同一套動物)。<br>前幾版:v10(2026-09-14)・🩹 <b>修好「裝成 App 打開就無法連上」的隱藏地雷</b>(姊妹站 3D 西洋棋幻影版在手機上實機踩到 ERR_FAILED,查出病根後六款棋類站一起修)。網站主機會把 index.html 這個網址自動轉到首頁「/」,而 App 的離線快取名單裡偏偏列著 index.html ⇒ 存進去的是「被轉址過」的一份,從主畫面開 App 時瀏覽器拒收它、直接顯示無法連上;更麻煩的是每次更新版本都會重踩一次。現在快取名單與離線退路一律只認首頁、不再碰 index.html;另外安裝時改成一個檔一個檔存(以前只要有一個檔抓不到,整批都不存),已裝的 App 拿到這一版之後就不會再遇到。<br>前幾版:v9 ⛶ <b>放大真的會放大了,電腦版也有 ⛶</b>(2026-09-14)——以前右上角那顆「放大」只是把標題藏掉,棋盤還在頁面下面要往下捲才看得到(手機橫向整個在畫面外)。現在按下去整頁變成一屏:棋盤縱橫貼滿螢幕、戰況那一行排在旁邊,不用捲;手機轉橫向會自動變成這個版面(不用再按 ⛶),想換模式或 AI 強度就按「☰ 選單」叫回設定。右上角多一顆看得見的「✕ 離開全螢幕」;電腦版以前完全沒有 ⛶(只在觸控裝置顯示),現在也有了。<br>前幾版:v8 ▼ <b>選單可以收起來了</b>——狀態卡右邊多一顆「▼ 收起選單」:下棋時按一下,棋盤旁邊的「戰況/暗子資訊/規則摘要」三張卡和「操作方式」就收起來,電腦上棋盤放大到整排寬度、手機上不用再往下捲過一大段;再按一次「▲ 展開選單」就回來。會記住你的選擇,下次開還是同一個樣子。<br>前幾版:v7 🏷 <b>版本與簡歷可以收起來了</b>——這一段預設是收合的,點標題那行才展開;展開後最高只佔半個畫面並且可以捲,不會再把上面的選單擠出畫面。收合時標題那行仍寫著版本與日期,一眼就知道自己開到的是哪一版(2026-09-07)・v6 🎯 <b>提示不再叫你做「白做工的交換」</b>——以前提示常建議吃一顆、吃完就被對方別的子吃回,什麼都沒賺(病因:同分時吃子排最前面;而且只往前看 3 步,第 4 步被吃回看不到)。現在:吃子那條線會算到「沒人想再吃」為止,子力真的有賺、而且比最好的走位手多賺半個兵,才會建議吃,否則建議走位或翻牌。實測 60 個局面:舊版 42 手建議吃子裡 4 手是白做工,新版 32 手裡 0 手,而且更快(最慢 618ms → 147ms)。前幾版:v5 ⛶ 手機放大鈕——右上角一顆放大鈕:收掉上方標題區、棋盤放到 96% 螢幕寬;Android 會連瀏覽器網址列一起收掉,iPhone 不支援網頁全螢幕也照樣放得大;再按一次縮回(2026-09-07)・v4 🔗 網址加 ?daily 直接開每日同副牌(信友火花「今日挑戰」卡點了就進今天的牌,不用再按每日鈕)(2026-09-06)・v3 📅 每日同副牌升級成每天 3 副牌——全世界的暗子擺法都一樣,運氣拉平、比誰用最少回合贏,每副分開記成績(2026-08-31)・v2 每日同副牌(單副)・v1 雲臺暗棋 3D PWA(對 AI 三檔/雙人同機/360° 視角)</p>
           </details>
           <p class="status-card__foot" id="statusSide">尚未定邊</p>
           <p class="install-hint" id="installHint">使用 Chrome 或 Edge 可直接安裝，iPhone 可用「分享」加入主畫面。</p>
         </section>
 
         <section class="board-card card">
+          <!-- 🐾 動物對手的透明小窗:app.js petLayout() 量棋盤投影框後貼在遠端那條邊上方;pointer-events:none,不擋任何點擊 -->
+          <div class="pet-window" id="petWindow" hidden aria-hidden="true">
+            <canvas id="petCanvas" width="120" height="150"></canvas>
+            <div class="pet-window__tag" id="petTag"></div>
+          </div>
           <div class="board-stage" id="boardStage">
             <div class="board-stage__halo"></div>
             <div class="board-stage__platform"></div>
@@ -175,8 +190,21 @@ body.immersive .board{width:min(96vw,32.5rem)} body.immersive .layout{width:100%
       addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') dwell() })
     })()
   </script>
+  <!-- 🐾 動物對手(2026-09-28,skill animal-opponent-kit):牠住在棋盤上方一個透明的 WebGL 小窗裡(#petWindow)。
+       three r128 從 CDN 載(跟 3D-Xiangqi 同一個網址,sw.js 也快取);引擎 js/animals.js 是 ES module、import 'three'
+       ⇒ import map 把 'three' 指到 js/three-shim.js(全域 THREE → 具名匯出 + 補 CapsuleGeometry)。
+       ⚠ import map 一定要在第一個 <script type="module">(下面 PetKit 那段)之前。 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script type="importmap">{ "imports": { "three": "./js/three-shim.js" } }</script>
   <script src="daily.js"></script>
   <script src="app.js"></script>
+  <!-- 🐾 模組橋接:app.js 是傳統 script ⇒ 掛到 window.PetKit 再發事件(app.js initPet() 兩種時序都接得住)。載不進來 = 沒動物,棋照下。 -->
+  <script type="module">
+    import { Opponent, animalFor, PET_MODES, ANIMALS } from './js/opponent.js';
+    import { createVoice } from './js/voice.js';
+    window.PetKit = { Opponent, animalFor, PET_MODES, ANIMALS, createVoice };
+    window.dispatchEvent(new Event('pet-kit-ready'));
+  </script>
 <!-- mfs-portrait-zoom v1 -->
 <button type="button" id="mfsExit" aria-label="離開全螢幕">✕ 離開全螢幕</button>
 <button type="button" id="mfsFull" title="放大(全螢幕)" aria-label="放大(全螢幕)" aria-pressed="false"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>

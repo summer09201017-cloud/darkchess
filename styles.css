@@ -249,7 +249,29 @@ select[disabled] {
 .board-card {
   padding: clamp(0.8rem, 1.7vw, 1.25rem);
   overflow: hidden;
+  /* 🐾 動物小窗要的位子:app.js petLayout() 量完寫進 --pet-reserve,卡片頂端多留這麼高(fit-play 版面的 padding:6px 在檔尾會蓋掉它,那邊由 fitBoard 預留) */
+  padding-top: calc(clamp(0.8rem, 1.7vw, 1.25rem) + var(--pet-reserve, 0px));
 }
+
+/* ══════════ 🐾 動物對手(2026-09-28,skill animal-opponent-kit;本站是 CSS 斜視棋盤 ⇒ 透明 WebGL 小窗)══════════ */
+.pet-window {
+  position: absolute; z-index: 2; pointer-events: none;
+  left: 0; top: 0; width: 120px; height: 150px;
+}
+.pet-window[hidden] { display: none; }
+.pet-window canvas { display: block; width: 100%; height: 100%; }
+.pet-window__tag {
+  position: absolute; left: 50%; top: 0; transform: translateX(-50%);
+  font-size: 0.74rem; line-height: 1.2; white-space: nowrap; color: var(--muted);
+  padding: 1px 7px; border-radius: 999px; background: rgba(9, 15, 19, 0.55);
+}
+.pet-controls { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.45rem; }
+.pet-controls .button { padding: 0.6rem 0.35rem; font-size: 0.82rem; line-height: 1.2; min-height: 2.75rem; }
+.pet-controls .button[aria-pressed="true"] {
+  border-color: rgba(120, 220, 160, 0.7);
+  background: linear-gradient(180deg, rgba(47, 145, 130, 0.38), rgba(14, 34, 31, 0.92));
+}
+.pet-field > span { font-size: 0.85rem; }
 
 .board-stage {
   position: relative;

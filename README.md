@@ -17,6 +17,24 @@
 
 ## 功能
 
+- 🐾 **動物對手坐到棋盤對面(2026-09-28,verTag v11 / sw v13;skill `animal-opponent-kit` 第七個活例、CSS 斜視站的第一個)**:
+  對戰 AI 時棋盤遠端上方坐著一隻會眨眼、會想棋、會說話的小動物——休閒 🐰 / 標準 🐱 / 高手 🐻;📅 每日同副牌 🦉;雙人同機不出現。
+  ★ 本站棋盤是 CSS 斜視(DOM + rotateX),沒有 three 場景可以坐 ⇒ 牠住在 `.board-card` 裡一個**透明的 WebGL 小窗**(`#petWindow > canvas`,`js/opponent.js`):
+  `petLayout()`(app.js)量棋盤投影框(`getBoundingClientRect` 含 rotateX/rotateZ/透視)把小窗貼在**遠端那條邊上方、置中**,`pointer-events:none`;
+  小窗底最多壓到木框 8px、**不壓任何一格**(遠端那排格子投影框最高點再往上 2px)。大小 = 棋盤投影寬 28%(96~200px,高 = 寬 × 1.25)。
+  一般版面:卡片頂端 `padding-top` 多留 `--pet-reserve`(styles.css);fit-play(⛶ 沉浸 / 手機橫向):`fitBoard()` 從可用高度扣 `petReserve()`(卡片高 20%,90~170px),
+  **卡片矮於 480px(真手機橫向)就藏、棋盤不為牠縮**(接受;看牠請直向)。小窗自己一套 scene / camera(fov 35、俯角 15°,距離二分法把凳子底~耳尖、手臂外緣收進 ±0.95)/ renderer(alpha),
+  rAF 只在牠看得見時跑、`document.hidden` 暫停、每 ~250ms 叫 `petLayout` 重量(拖曳旋轉 / 過渡動畫時跟著)。
+  反應跟 AI 流程同一個分岔:牠開算 think(人聲每三手一次)/ 翻到自己的子 hop(人聲每三次一次)・翻到對方的 shrug / 吃你的子 hop+「吃掉了!」/ 走位 place /
+  你吃牠的子 gasp+「哇」/ 一局結束 win・lose(每局一次閂鎖)/ 等你太久閒聊(15s 第一句、再 30s 第二句、一回合兩句,任何 pointerdown / keydown 歸零)。
+  引擎 `js/animals.js`、人聲 `js/voice.js`、`js/three-shim.js`(全域 THREE r128 → ESM 具名匯出 + 補 CapsuleGeometry)三支與 skill assets **同一份,不在站裡改**(browser-check 逐位元對賬);
+  three r128 從 CDN 載(跟 3D-Xiangqi 同一個網址,sw 也快取)、index.html 一張 import map 把 `three` 指到 shim(必須在第一個 module script 之前)、`window.PetKit` 橋接進傳統 script。
+  人聲 `npm run voice`(= `gen-voice.mjs --phrases js/voicePhrases.js --out voice --sw sw.js`)⇒ `voice/` 36 支 mp3 + manifest,sw.js `voice:begin~end` 段照目錄重生。
+  ⚠ `js/package.json` 寫 `{"type":"module"}`:repo 根是 `"type":"commonjs"`,node(gen-voice / browser-check)import `js/*.js` 才不會當成 CJS 炸掉;瀏覽器不看它。
+  UI:設定卡多一組「🐾 對手動物」三段(會說話 / 不出聲 / 關,localStorage `banqi-pet`);狀態行「你執紅，🐱 橘貓(AI)執黑。」、思考中帶臉、小窗上方小名牌。
+  驗:browser-check 🐾 段 +28(檔案對賬 / 引擎同 skill / 真操作開局 / 鐵則遍歷 / 頭在小窗裡 / 小窗在卡片裡・不壓格・遠端那排點得到 / 直向放得下 / 橫向 fit-play 藏 /
+  真點翻子等牠回手 figs.log 有 think+hop / 姿勢手動推時間 / 三段 / 雙人同機不坐 / 人聲 runtime / 每日 🦉);npm test 29 / test:fold 33 / check-fit / test:hint 全綠;四種版面截圖目視。
+  ⚠ 姿勢一律 `pet.update(0.4)` 手動推時間(無頭 fps 低);`pet.probe()` 一次量頭頂 NDC / 頭框 / 小窗框。
 - 💡 **AI 提示**:2026-09-01 首版是「借同一支 `chooseAiAction`,把 `aiSide` 換成玩家這邊」;
   **2026-09-07 起改走專用的 `chooseHintAction()`** —— 使用者退件「提示叫我吃、吃完又被別的子吃回,等於交換被吃」。
   病因 ①同分偏好吃子(`scored.sort` 是穩定排序,平手時照 `orderActionsForSearch` 的順序,而那支把吃子 ×1.2 排最前)
@@ -43,7 +61,10 @@
 | `index.html` / `styles.css` | 殼層與版面 |
 | `app.js` | 規則、3D 渲染、AI、提示 |
 | `daily.js` | 每日同副牌 |
-| `sw.js` | Service Worker,`CACHE_NAME = "cloud-banqi-v12"`(改殼層檔必 +1;**名單/退路不可有 index.html,只認 `./`**;v8 = 提示不建議白做工的交換、v9 = 版本簡歷可收合(別場 0907 批次)、v10 = ▼ 收起選單(2026-09-14)) |
+| `js/animals.js` / `js/voice.js` / `js/three-shim.js` | 🐾 動物引擎 / 🗣 人聲 runtime / 全域 THREE→ESM shim(與 skill animal-opponent-kit/assets **同一份,不要在這裡改**;browser-check 對賬) |
+| `js/opponent.js` / `js/voicePhrases.js` | 本站的動物接線(透明 WebGL 小窗、誰坐、反應、閒聊、probe)與四隻的唸稿;`scripts/gen-voice.mjs` 烤 mp3 → `voice/`(`npm run voice`) |
+| `js/package.json` | 只給 node 看的 `{"type":"module"}`(repo 根是 commonjs) |
+| `sw.js` | Service Worker,`CACHE_NAME = "cloud-banqi-v13"`(v13 = 🐾 動物對手:+js 五支 + three CDN + voice 段)(改殼層檔必 +1;**名單/退路不可有 index.html,只認 `./`**;v8 = 提示不建議白做工的交換、v9 = 版本簡歷可收合(別場 0907 批次)、v10 = ▼ 收起選單(2026-09-14)) |
 | `manifest.webmanifest` / `icons/` | PWA |
 | `test/daily.mjs` | `npm test`:每日牌組檢查 |
 | `scripts/browser-check.mjs` | 真瀏覽器冒煙檢查 |
@@ -58,8 +79,12 @@ npm test               # node test/daily.mjs(純 node,不用起站)
 py -m http.server 8797 # 下面三支真瀏覽器測試預設打 http://localhost:8797(或 CHECK_URL=線上網址)
 npm run test:hint      # node test/hint.mjs
 npm run test:fold      # node scripts/check-fold.mjs
-node scripts/browser-check.mjs
+node scripts/browser-check.mjs   # 含 🐾 動物對手段(0928)
+npm run voice          # 🐾 烤動物人聲(要網路;累加式,已有的跳過)
 ```
+⚠ browser-check 的「引擎層直推到人贏」那六條(推到分出勝負 → 記戰績 → 第 2 副)**0928 之前就紅**(`git stash` 回原碼同樣紅):
+測試自己把 AI 的子全清掉再找「有相鄰空格的己方明子」,今天這副牌找不到 ⇒ 六條連環。0928 順手把它的相鄰算法從 8 欄改成本站真正的 4 欄(`BOARD_COLS`),
+但今天的牌仍然找不到,病在測試的假設不在遊戲;留給下一手。
 
 ## 部署(手動,push 不會上線)
 
@@ -69,6 +94,7 @@ curl -s "https://darkchesscodex.pages.dev/sw.js?b=$RANDOM" | grep CACHE_NAME   #
 ```
 
 改了殼層檔先把 `sw.js` 的 `CACHE_NAME` 版本 +1 再部署,否則已安裝的 PWA 永遠看到舊版。
+部署後驗:`curl -s "https://darkchesscodex.pages.dev/js/opponent.js?b=$RANDOM" | head -c 60`(要是真內容不是首頁)、`CHECK_URL=https://darkchesscodex.pages.dev node scripts/browser-check.mjs`。
 
 ⚠ **SW 快取名單與離線退路不可以有 `index.html`(0914 全艦隊修,sw v12)**:Cloudflare Pages 把 `/index.html` 308 到 `/`,
 名單裡有它 install 就存到 redirected 回應,裝成 App 打開就 ERR_FAILED(3D-Chess 幻影版實錘)。一律只認 `./`;install 逐一 add+catch 不用 addAll。
@@ -78,6 +104,7 @@ curl -s "https://darkchesscodex.pages.dev/sw.js?b=$RANDOM" | grep CACHE_NAME   #
 
 作品集已收、`sites.json` 棋類已登。新功能上線後照 skill `portfolio-ledger-guard` 收尾。
 
+- ✅ **🐾 動物對手坐到棋盤對面(0928 HFP 機・Fable 5.1・0928-3D動物對手-象棋家族-家裡 場,verTag v11 / sw v13)**:見上面「功能」第一條;CSS 斜視站用透明 WebGL 小窗,同一套引擎 / 人聲。
 - ✅ **拔掉「index.html 進 SW 快取名單」地雷(0914 全艦隊,verTag v10 / sw v12)**:`APP_ASSETS` 拔 `./index.html`、退路 `caches.match("./")` 只給導覽請求、`addAll` → 逐一 `add().catch()`;線上 `check-sw-nav-fleet.mjs` 🟢(開 /index.html 兩次不 ERR_FAILED、快取無 redirected、離線回殼層)。見「部署」段的 ⚠。
 - ✅ **⛶ 放大真的放大 + 桌機 ⛶ + 手機橫向自動滿版(0914,v9 / sw v11)**:`body.fit-play`(app.js `syncFitPlay`/`fitBoard`/`bindFitPlay`,styles.css 檔尾)—— 沉浸或手機橫向時整頁一屏,棋盤用所有子孫的投影框聯集逐步縮放到剛好裝進 `.board-card`(`--fit-board-w` + `--fit-shift`);`#mfsExit` 是看得見的出口(同一個 toggle);「☰ 選單」= `body.panels-open` 暫回一般版面。驗:`CHECK_URL=… node scripts/check-fit.mjs`(本機預設 8797)。
 
