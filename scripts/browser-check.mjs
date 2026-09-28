@@ -126,63 +126,215 @@ ok(await page.evaluate(() => {
 }), "★ 局面一變,上一個建議自己就對不上了(不靠逐處清)");
 await page.evaluate(() => { window.__banqi.state.turnCount -= 1; });
 
-// 引擎層直推到人贏(驗戰績鏈;真下完一盤太久)
-const won = await page.evaluate(async () => {
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const B = window.__banqi;
-  const s = B.state;
-  const human = s.humanSide || "red";
-  const ai = human === "red" ? "black" : "red";
-  // 把 AI 的子全吃掉(等同人贏),再走一步觸發勝負判定
-  for (const p of s.pieces) if (p.side === ai) { p.captured = true; p.position = -1; }
-  s.board = s.board.map((cell) => {
-    if (cell === null) return null;
-    return s.pieces[cell].captured ? null : cell;
-  });
-  s.turnSide = human;
-  /* 走一步合法手觸發勝負判定。
-     ⚠ 暗棋只能走**相鄰**格(8 欄 × 4 列)——第一版用「第一個空格」當目標,
-       本機剛好相鄰才過、線上就紅了(典型的假紅:病在測試不在遊戲)。 */
-  /* 0928 修:本站棋盤是 **4 欄 × 8 列**(app.js BOARD_COLS=4、index = row*4+col),這裡原本寫 8 欄 ⇒ 相鄰算錯,
-     今天這副牌找不到「有相鄰空格的己方明子」、後面六條連環假紅(0928 接動物對手時抓到;stash 回原碼同樣紅,不是新病)。 */
-  const COLS = 4, ROWS = 8;
-  const adjacentEmpty = (index) => {
-    const row = Math.floor(index / COLS);
-    const col = index % COLS;
-    const cands = [];
-    if (row > 0) cands.push(index - COLS);
-    if (row < ROWS - 1) cands.push(index + COLS);
-    if (col > 0) cands.push(index - 1);
-    if (col < COLS - 1) cands.push(index + 1);
-    return cands.find((i) => s.board[i] === null);
-  };
-  const mine = s.pieces.find((p) => p.side === human && p.revealed && !p.captured && adjacentEmpty(p.position) !== undefined);
-  if (mine) {
-    const target = adjacentEmpty(mine.position);
-    B.handleCellClick(mine.position);
-    await sleep(250);
-    B.handleCellClick(target);
-  }
-  await sleep(900);
-  if (!s.winner) return { winner: null, why: "沒找到有相鄰空格的己方明子", msg: document.querySelector("#statusMessage").textContent, store: localStorage.getItem("cloud-banqi:daily:v1") };
-  return { winner: s.winner, msg: document.querySelector("#statusMessage").textContent,
-    store: localStorage.getItem("cloud-banqi:daily:v1") };
-});
-ok(!!won.winner, "推到分出勝負", JSON.stringify(won).slice(0, 160));
-const rec = JSON.parse(won.store || "{}")[first.key] || {};
-ok((rec.decks || {})["1"]?.best > 0, "★ 贏了記戰績、而且是**記在第 1 副底下**(" + won.store + ")");
-ok(won.msg.includes("破解第 1 副") && won.msg.includes("已破 1/3"), "結算訊息帶副數與進度", won.msg);
+/* ══════ 📅 勝局 → 戰績 → 接第 2 副(T01~T06)══════
+   0928 修六紅:舊版在「提示段玩到一半的當天真實牌局」上把 AI 子清光,再找「有相鄰空格的己方明子」
+   ——當天洗牌若己方明子四周都是暗子(0928 第 1 副:0 格黑卒、鄰格 1/4 都是暗子),根本沒走那一手,
+   六條連環假紅,而診斷一律說「沒找到明子」。病在測試前置,不在遊戲。
+   ⇒ 改成:每個案例一個全新 context + 固定日期(page.clock.setFixedTime:只釘 Date,計時器照跑)
+     + 固定合法雙子殘局(紅俥在 0、黑卒在 1、已走 8 回合),走正式 handleCellClick 0 → 1,
+     讓 performAction → finalizeAfterAction → scoreDailyIfWon 自己產出勝負與戰績。
+   ⚠ 這是引擎/UI 狀態整合測試,沒有驗棋盤滑鼠命中(那段由動物段與提示鈕的真點擊負責)。
+   ⚠ 棋盤是 4 欄 × 8 列(app.js BOARD_COLS=4,index = row*4+col)。 */
+const COLS = 4, ROWS = 8, CELLS = COLS * ROWS;
+/** 獨立幾何裁判(不抄產品的 step):同列左右相鄰或同欄上下相鄰 */
+const adjacent = (a, b) => {
+  const ra = Math.floor(a / COLS), ca = a % COLS, rb = Math.floor(b / COLS), cb = b % COLS;
+  return (ra === rb && Math.abs(ca - cb) === 1) || (ca === cb && Math.abs(ra - rb) === 1);
+};
 
-/* 📅 破完第 1 副 → 再按每日鈕要接**第 2 副**,而且牌面不同 */
-await page.click("#dailyButton");
-await page.waitForTimeout(500);
-const deck2 = await page.evaluate(() => {
+/** fixture 一致性檢查:回錯誤字串陣列(空=合法) */
+function validateFixture(snap) {
+  const errs = [];
+  if (!Array.isArray(snap.board) || snap.board.length !== CELLS) errs.push(`board 長度 ${snap.board && snap.board.length} ≠ ${CELLS}`);
+  if (!Array.isArray(snap.pieces) || snap.pieces.length !== CELLS) errs.push(`pieces 筆數 ${snap.pieces && snap.pieces.length} ≠ ${CELLS}`);
+  if (errs.length) return errs;
+  const seen = new Set();
+  snap.board.forEach((id, cell) => {
+    if (id === null) return;
+    if (seen.has(id)) errs.push(`棋子 ${id} 在棋盤上出現兩次`);
+    seen.add(id);
+    const p = snap.pieces[id];
+    if (!p) { errs.push(`格 ${cell} 指向不存在的棋子 ${id}`); return; }
+    if (p.captured) errs.push(`格 ${cell} 上的棋子 ${id} 標成已被吃`);
+    if (p.position !== cell) errs.push(`格 ${cell} 指向棋子 ${id},但它的 position=${p.position}`);
+  });
+  snap.pieces.forEach((p, i) => {
+    if (p.id !== i) errs.push(`pieces[${i}].id=${p.id}(id 與索引不一致)`);
+    if (p.captured && p.position !== -1) errs.push(`已被吃的棋子 ${i} position=${p.position}(應為 -1)`);
+    if (!p.captured && snap.board[p.position] !== i) errs.push(`活棋 ${i} position=${p.position},但 board[${p.position}]=${snap.board[p.position]}`);
+  });
+  return errs;
+}
+
+// 自我檢查:幾何裁判與 fixture 檢查器本身要會抓錯(否則正例綠燈沒有意義)
+ok(adjacent(0, 1) && !adjacent(3, 4) && adjacent(4, 8) && !adjacent(0, 5),
+  "勝局前置:獨立幾何裁判(4 欄盤:3→4 不相鄰、4→8 上下相鄰、0→5 斜角不算)");
+
+const DATE_CASES = ["2026-09-27", "2026-09-28", "2026-09-29"];
+
+/** 開一個全新 context,固定日期,開今天第 1 副,存下原始牌面,再注入雙子殘局。
+    opts.mutateStore:把 BanqiDaily.applyDailyWin 換成不持久化的假實作(變異測試用) */
+async function openFixture(dateStr, opts = {}) {
+  const ctx = await browser.newContext({ viewport: { width: 1100, height: 820 }, serviceWorkers: "block" });
+  const pg = await ctx.newPage();
+  const errs = [];
+  pg.on("pageerror", (e) => errs.push(String(e)));
+  await pg.clock.setFixedTime(new Date(dateStr + "T12:00:00+08:00"));   // 只釘 Date;setTimeout/rAF 照跑
+  await pg.goto(URL + "/?v=" + Date.now(), { waitUntil: "networkidle" });
+  await pg.waitForFunction(() => !!(window.__banqi && window.BanqiDaily), null, { timeout: 10000 });
+  await pg.evaluate(() => localStorage.removeItem("cloud-banqi:daily:v1"));
+  if (opts.mutateStore) {
+    await pg.evaluate(() => {
+      window.BanqiDaily.applyDailyWin = (key, deckNo, turns) => ({ best: turns, isNewBest: true, played: 1, brokenCount: 1 });
+    });
+  }
+  await pg.click("#dailyButton");                    // 真點每日鈕開今天第 1 副
+  await pg.waitForFunction(() => window.__banqi.state.dailyDeck === 1, null, { timeout: 5000 });
+  const setup = await pg.evaluate(() => {
+    const B = window.__banqi, s = B.state;
+    const originalDeck1 = s.board.slice();           // ★ 注入殘局「之前」先複製原始第 1 副
+    const dailyKey = s.dailyKey;
+    const rook = s.pieces.find((p) => p.side === "red" && p.type === "rook");
+    const pawn = s.pieces.find((p) => p.side === "black" && p.type === "pawn");
+    for (const p of s.pieces) { p.captured = true; p.position = -1; p.revealed = true; }
+    s.board = Array(s.board.length).fill(null);
+    for (const [p, cell] of [[rook, 0], [pawn, 1]]) { p.captured = false; p.revealed = true; p.position = cell; s.board[cell] = p.id; }
+    Object.assign(s, {
+      mode: "ai", humanSide: "red", aiSide: "black", turnSide: "red", turnCount: 8, dailyDeck: 1,
+      winner: null, winnerReason: "", dailyScored: false, aiThinking: false,
+      selectedIndex: null, legalTargets: [], hint: null, lastAction: null,
+    });
+    return {
+      originalDeck1, dailyKey, rookId: rook.id, pawnId: pawn.id,
+      snap: { board: s.board.slice(), pieces: s.pieces.map((p) => ({ ...p })) },
+      legal: B.getLegalActions(s, "red"),
+      blackLive: s.pieces.filter((p) => p.side === "black" && !p.captured).length,
+      winner: s.winner, store: localStorage.getItem("cloud-banqi:daily:v1"),
+    };
+  });
+  return { ctx, pg, errs, setup };
+}
+
+/** 讀勝局後的觀測值(失敗時整包印出來,依觀測判斷是哪一步斷) */
+const observe = (pg) => pg.evaluate(() => {
   const s = window.__banqi.state;
-  return { deck: s.dailyDeck, board: s.board.slice(), line: document.querySelector("#dailyLine").textContent };
+  return {
+    humanSide: s.humanSide, turnSide: s.turnSide, aiThinking: s.aiThinking, lastAction: s.lastAction,
+    turnCount: s.turnCount, winner: s.winner, winnerReason: s.winnerReason,
+    dailyKey: s.dailyKey, dailyDeck: s.dailyDeck, dailyScored: s.dailyScored,
+    msg: document.querySelector("#statusMessage").textContent,
+    turn: document.querySelector("#statusTurn").textContent,
+    store: localStorage.getItem("cloud-banqi:daily:v1"),
+  };
 });
-ok(deck2.deck === 2, "再按每日鈕=自動接第 2 副", JSON.stringify({ deck: deck2.deck }));
-ok(JSON.stringify(deck2.board) !== JSON.stringify(first.board), "★ 第 2 副是另一副牌(擺法不同)");
-ok(deck2.line.includes("第 2/3 副") && deck2.line.includes("已破 1 副"), "狀態行帶第 2/3 副與進度", deck2.line);
+
+const playLastMove = async (pg) => {
+  await pg.evaluate(() => { const B = window.__banqi; B.handleCellClick(0); B.handleCellClick(1); });
+  await pg.waitForFunction(() => window.__banqi.state.winner !== null, null, { timeout: 3000 }).catch(() => {});
+};
+
+/** fixture 前置檢查(每個案例都跑);回 true=可以往下 */
+function checkFixture(tag, setup) {
+  const errs = validateFixture(setup.snap);
+  const hasCap = setup.legal.some((a) => a.type === "capture" && a.from === 0 && a.to === 1);
+  const good = errs.length === 0 && adjacent(0, 1) && hasCap && setup.blackLive === 1
+    && setup.winner === null && setup.store === null;
+  ok(good, `${tag} 前置局面合法(紅俥 0 → 黑卒 1 可吃、黑方剩 1 子、尚無勝者與戰績)`,
+    "測試前置局面不合法:" + JSON.stringify({ errs, hasCap, blackLive: setup.blackLive, winner: setup.winner, store: setup.store, legal: setup.legal }).slice(0, 300));
+  return good;
+}
+
+for (const day of DATE_CASES) {
+  const tag = `[${day}]`;
+  const { ctx, pg, errs, setup } = await openFixture(day);
+  ok(setup.dailyKey === day, `${tag} 固定日期生效(dailyKey=${setup.dailyKey})`);
+  const fixtureOk = checkFixture(tag, setup);
+  const dep = fixtureOk ? "" : "(前置局面不合法,本條連帶失敗)";
+
+  await playLastMove(pg);
+  const w = await observe(pg);
+  const diag = JSON.stringify(w).slice(0, 400);
+  // T01
+  ok(fixtureOk && w.winner === "red" && w.humanSide === "red" && w.winnerReason === "capture" && w.turnCount === 9,
+    `${tag} T01 推到分出勝負(紅勝・capture・9 回合)${dep}`, diag);
+  // T02
+  const book = JSON.parse(w.store || "{}");
+  const rec = (book[day] && book[day].decks) || {};
+  ok(fixtureOk && Object.keys(book).join() === day && Object.keys(rec).join() === "1"
+    && rec["1"].best === 9 && rec["1"].played === 1,
+    `${tag} T02 ★ 贏了記戰績、而且是**記在第 1 副底下**(best=9・played=1・第 2/3 副無紀錄)${dep}`, String(w.store));
+  // T03
+  ok(fixtureOk && w.msg.includes("破解第 1 副") && w.msg.includes("用了 9 回合") && w.msg.includes("已破 1/3") && w.turn === "你獲勝",
+    `${tag} T03 結算訊息帶副數與進度${dep}`, `${w.turn} | ${w.msg}`);
+
+  // 重複輸入同兩格:winner 守門擋住,不重記
+  await pg.evaluate(() => { const B = window.__banqi; B.handleCellClick(0); B.handleCellClick(1); });
+  await pg.waitForTimeout(300);
+  const again = await observe(pg);
+  const againRec = ((JSON.parse(again.store || "{}")[day] || {}).decks || {})["1"] || {};
+  ok(fixtureOk && again.turnCount === 9 && againRec.played === 1, `${tag} 結局後重點同兩格 ⇒ 回合與 played 不變`,
+    JSON.stringify({ turnCount: again.turnCount, played: againRec.played }));
+
+  // T04~T06:真點每日鈕接第 2 副
+  await pg.click("#dailyButton");
+  await pg.waitForFunction(() => window.__banqi.state.dailyDeck === 2, null, { timeout: 3000 }).catch(() => {});
+  const d2 = await pg.evaluate(() => {
+    const s = window.__banqi.state, el = document.querySelector("#dailyLine");
+    return { key: s.dailyKey, deck: s.dailyDeck, turns: s.turnCount, board: s.board.slice(), line: el.textContent, hidden: el.hidden };
+  });
+  ok(fixtureOk && d2.key === day && d2.deck === 2 && d2.turns === 0, `${tag} T04 再按每日鈕=自動接第 2 副${dep}`,
+    JSON.stringify({ key: d2.key, deck: d2.deck, turns: d2.turns }));
+  const perm = d2.board.length === CELLS && new Set(d2.board).size === CELLS && d2.board.every((id) => Number.isInteger(id) && id >= 0 && id < CELLS);
+  await pg.click("#dailyButton");                    // 第 2 副還沒破 ⇒ 重進要逐格相同
+  await pg.waitForTimeout(300);
+  const d2again = await pg.evaluate(() => window.__banqi.state.board.slice());
+  ok(fixtureOk && perm && JSON.stringify(d2.board) !== JSON.stringify(setup.originalDeck1) && JSON.stringify(d2again) === JSON.stringify(d2.board),
+    `${tag} T05 ★ 第 2 副是另一副牌(完整 32 子排列、≠ 原始第 1 副、重進逐格相同)${dep}`,
+    JSON.stringify({ perm, d2: d2.board.slice(0, 8), deck1: setup.originalDeck1.slice(0, 8) }));
+  ok(fixtureOk && d2.hidden === false && d2.line.includes("第 2/3 副") && d2.line.includes("已破 1 副") && d2.line.includes("已走 0 回合"),
+    `${tag} T06 狀態行帶第 2/3 副與進度${dep}`, d2.line);
+  ok(errs.length === 0, `${tag} 勝局鏈零 pageerror`, errs.join(" | ").slice(0, 200));
+  await ctx.close();
+}
+
+/* ── 反例:測試本身要會抓錯(否則上面的綠燈可能是恆真)── */
+{ // ① 棋盤不一致 ⇒ fixture 檢查必須報錯
+  const { ctx, setup } = await openFixture("2026-09-28");
+  const bad = JSON.parse(JSON.stringify(setup.snap));
+  bad.pieces[setup.rookId].position = 5;
+  const e = validateFixture(bad);
+  ok(e.length > 0 && e.some((m) => m.includes("position=5")), "反例① 紅俥 position 與 board 不符 ⇒ fixture 檢查報錯", JSON.stringify(e));
+  const short = { board: setup.snap.board.slice(0, 31), pieces: setup.snap.pieces };
+  ok(validateFixture(short).length > 0, "反例① 31 格盤面 ⇒ fixture 檢查報錯(不截斷湊數)");
+  await ctx.close();
+}
+{ // ② 不走最後一手 ⇒ 前置本身不能造出通關
+  const { ctx, pg, setup } = await openFixture("2026-09-28");
+  checkFixture("反例②", setup);
+  await pg.waitForTimeout(400);
+  const w = await observe(pg);
+  await pg.click("#dailyButton");
+  await pg.waitForTimeout(300);
+  const deck = await pg.evaluate(() => window.__banqi.state.dailyDeck);
+  ok(w.winner === null && w.store === null && deck === 1, "反例② 不走 0→1 ⇒ 沒有勝者、沒有戰績、每日鈕仍是第 1 副",
+    JSON.stringify({ winner: w.winner, store: w.store, deck }));
+  await ctx.close();
+}
+{ // ③ 斷掉紀錄寫入 ⇒ T01 照綠,但 T02 與接副必須抓到
+  const { ctx, pg, setup } = await openFixture("2026-09-28", { mutateStore: true });
+  checkFixture("反例③", setup);
+  await playLastMove(pg);
+  const w = await observe(pg);
+  await pg.click("#dailyButton");
+  await pg.waitForTimeout(300);
+  const deck = await pg.evaluate(() => window.__banqi.state.dailyDeck);
+  const t01 = w.winner === "red" && w.turnCount === 9;
+  const t02Caught = !((JSON.parse(w.store || "{}")["2026-09-28"] || {}).decks || {})["1"];
+  ok(t01 && t02Caught && deck === 1, "反例③ applyDailyWin 不持久化 ⇒ T01 仍紅勝,但 T02(無戰績)與 T04(仍第 1 副)確實會紅",
+    JSON.stringify({ t01, t02Caught, deck }));
+  await ctx.close();
+}
+
 
 /* ══════ 🐾 動物對手(2026-09-28,skill animal-opponent-kit;本站是 CSS 斜視棋盤 ⇒ 透明 WebGL 小窗貼在棋盤遠端上方)══════
    檔案側對賬 → 真操作開一局標準 → 坐著 / 鐵則遍歷 / 頭在小窗裡 / 小窗在卡片裡、不蓋任何格子、不擋點擊 / 狀態帶臉
