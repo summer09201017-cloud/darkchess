@@ -196,6 +196,7 @@ body.immersive .board{width:min(96vw,32.5rem)} body.immersive .layout{width:100%
        ⚠ import map 一定要在第一個 <script type="module">(下面 PetKit 那段)之前。 -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script type="importmap">{ "imports": { "three": "./js/three-shim.js" } }</script>
+  <script src="banqi-core.js"></script>
   <script src="daily.js"></script>
   <script src="app.js"></script>
   <!-- 🐾 模組橋接:app.js 是傳統 script ⇒ 掛到 window.PetKit 再發事件(app.js initPet() 兩種時序都接得住)。載不進來 = 沒動物,棋照下。 -->
