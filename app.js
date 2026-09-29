@@ -120,7 +120,8 @@ let idleQueue = [];
 const SEARCH_TIMEOUT_MS = 10000;
 const AI_MIN_DELAY_MS = 220;   // 沿用 v11:AI 至少「想」220ms 才下,不會快到像沒想
 const search = { worker: null, gen: 0, reqId: 0, pending: null };
-const searchHooks = { delayMs: 0, fail: false, hang: false };   // 測試用(scripts/check-3d.mjs 過期 / 逾時反例);真人用不到
+const searchHooks = { delayMs: 0, fail: false, hang: false, unsafeNoGuard: false };   // 測試用(scripts/check-3d.mjs 過期 / 逾時反例);真人用不到
+const searchLog = [];   // 被採用的回覆(check-3d 驗「採用的一定是這一局、最新那個請求」;最多留 40 筆)
 const dragState = {
   active: false,
   moved: false,
@@ -173,6 +174,8 @@ window.__banqi = {
   get gameGen() { return gameGen; },
   get search() { return { gen: search.gen, reqId: search.reqId, pending: Boolean(search.pending), worker: Boolean(search.worker) }; },
   searchHooks,
+  searchLog,
+  render: (options) => render(options),   // 測試擺殘局後重畫(fullBoard:true = 3D 瞬間對齊)
   publicCells: () => publicCells(),
   loadView3d,
   migrateView3d,
@@ -344,7 +347,11 @@ function searchPayload(purpose) {
 function ensureWorker() {
   if (search.worker) return search.worker;
   const worker = new Worker("./ai-worker.js");   // 建不起來會丟例外,由 requestSearch 接住
-  worker.onmessage = (event) => onSearchReply(event.data || {});
+  worker.onmessage = (event) => {
+    const msg = event.data || {};
+    // 測試:模擬「Worker 很慢」——延遲發生在回覆**抵達主執行緒之前**,這時候局面可能早就換了(過期守門就是防這個)
+    if (searchHooks.delayMs > 0) setTimeout(() => onSearchReply(msg), searchHooks.delayMs); else onSearchReply(msg);
+  };
   worker.onerror = (event) => {
     if (event && event.preventDefault) event.preventDefault();
     const pending = search.pending;
@@ -404,17 +411,17 @@ function requestSearch(purpose, onAction, onFail, onSettle) {
 }
 function onSearchReply(msg) {
   const req = search.pending;
-  if (!req || msg.gen !== req.gen || msg.reqId !== req.reqId || msg.purpose !== req.purpose) return;   // 過期:丟
-  const deliver = () => finishSearch(req, msg);
-  if (searchHooks.delayMs > 0) setTimeout(deliver, searchHooks.delayMs); else deliver();
+  if (!req) return;
+  if (!searchHooks.unsafeNoGuard && (msg.gen !== req.gen || msg.reqId !== req.reqId || msg.purpose !== req.purpose)) return;   // 過期:丟
+  finishSearch(req, msg);
 }
 function finishSearch(req, msg) {
   if (search.pending !== req) return;               // 已經被取代 / 失效
   clearTimeout(req.timer);
   search.pending = null;
   settle(req);
-  // ★ 再對一次:還是這一局、這一手、同一邊
-  if (req.gen !== search.gen || req.game !== gameGen || req.turnCount !== state.turnCount || req.turnSide !== state.turnSide) return;
+  // ★ 再對一次:還是這一局、這一手、同一邊(unsafeNoGuard 只給 check-3d 的「拿掉守門就該紅」反例用)
+  if (!searchHooks.unsafeNoGuard && (req.gen !== search.gen || req.game !== gameGen || req.turnCount !== state.turnCount || req.turnSide !== state.turnSide)) return;
   if (msg.error) { req.onFail(msg.error); return; }
   const action = msg.action || null;
   if (action) {
@@ -422,6 +429,8 @@ function finishSearch(req, msg) {
     const legal = getLegalActions(state, side).some((a) => JSON.stringify(a) === JSON.stringify(action));
     if (!legal) { req.onFail("illegal"); return; }
   }
+  searchLog.push({ purpose: req.purpose, replyGen: msg.gen, replyReqId: msg.reqId, reqGen: req.gen, reqId: req.reqId, gen: search.gen, game: gameGen });
+  if (searchLog.length > 40) searchLog.shift();
   req.onAction(action, req);
 }
 
@@ -1221,6 +1230,7 @@ function renderBoard(forceFull = false) {
   }
 
   viewRefs.boardUi = snapshot;
+  if (renderer3d) renderer3d.setMarks(marksFor());   // 🧊 選取 / 取消選取只走 renderBoard,3D 標記也要跟著換(0929 截圖抓到:點了明子 3D 沒亮)
 }
 
 function ensureBoardCells() {

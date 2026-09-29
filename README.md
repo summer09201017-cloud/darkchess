@@ -17,7 +17,27 @@
 
 ## 功能
 
-- 🐾 **動物對手坐到棋盤對面(2026-09-28,verTag v11 / sw v13;skill `animal-opponent-kit` 第七個活例、CSS 斜視站的第一個)**:
+- 🧊 **原址升級真 3D(2026-09-29,verTag v12 / sw v14;規格 `Documents/Codex/2026-09-28/0917-3d-11-3d-3d-3d/work/dark-3d-spec-draft.md`)**:
+  棋盤、32 枚棋子、動物對手都在**同一個** three scene(`js/scene3d.js` 總控,ES module 經 index.html 橋接成 `window.Banqi3D`)。
+  分層照 skill `board3d-kit`:底座 `js/board3d.js`(來自 gomoku3d,含 fitExtra 動物讓位)只管「一張會被點的立體棋盤」;
+  `js/pieces3d.js` 管棋子/動畫/標記/命中;規則與輪次仍只在 app.js 一份 state。站內對底座的適配有七條,全寫在 board3d.js 檔頭
+  (r128 色彩 encoding、r128 非物理燈光、storageKey:null、ResizeObserver/onCamera/context lost、**垂直置中取景 centerFit**(setViewOffset,命中同一個投影矩陣不會偏)、
+  讓位上限可調 fitExtraMax 1.22(開動物盤寬 ≥ 關閉時 ~79%)、fitSlab 盤底四角入鏡)。
+  ★ **暗子不洩漏**:app.js `publicCells()` 對暗子只給 `{hidden:true}`;32 枚共用一個背面材質、mesh 名稱只有 `piece-hidden`、userData 全空;
+  翻面**規則先提交**、動畫前半只畫背面、**越過中點才貼正面**(朗讀內容也等到中點才更新);正面貼圖翻開才畫。
+  ★ **手勢**:`|dx|+|dy| ≥ 8px` 才算拖曳;一次 primary pointer 最多一個點擊;cancel / lostpointercapture / 第二指 / 盤外放開作廢;畫布不聽 click(沒有雙送)。
+  命中先對 ≤32 枚棋子圓柱做解析式射線相交(最近者贏,低視角不會點到後排),沒打到才打盤面平面;盤外木框 / 背景 / 動物 = null。
+  ★ **AI / 提示進 Worker**:規則+搜尋逐字抽到 `banqi-core.js`(主執行緒 / `ai-worker.js` / node 測試共用一份;`test/core-parity.mjs` 拿抽離前錄的 40 局黃金檔守 160 手全同);
+  請求帶 gen / reqId / turnCount / turnSide / purpose,重開 / 切模式 / 切每日 / 換難度都讓舊搜尋失效;回來還要再對一次合法手;10 秒沒回或出錯 ⇒「重試 AI」(不代走、不判輸)。
+  同一個高手搜尋放主執行緒會凍 ~900ms,放 Worker 後 rAF 最大空窗 50ms(check-3d ⑦,無頭 Edge 實測)。
+  ★ **視角**:skill view-kit 浮動面板(棋盤左上「🎥 視角」:斜俯視 58° / 正俯視 88° / 對局視角 34°、水平 0–359°、俯角 20–88°、🔃 換邊 +180°、🎯 重置);
+  存在新鍵 `cloud-banqi-3d-view-v1`(`{version:1,preset,yaw,pitch|null}`),第一次從舊 `viewSpin/viewTilt` 換算(yaw = spin、pitch = 90 − tilt,預設 350 / 46°;舊 flat ⇒ 正俯視 88°),
+  符號用升級前 784d49e 的 CSS 棋盤四角方位驗過(`test/fixtures/legacy-view-golden.json`,差 ≤ 2.1°);舊角度備份不覆寫。
+  ★ **平面退路**:WebGL 開不起來 / 中途 context lost ⇒ 卸掉 3D、回到原本的 DOM 棋盤同局繼續(`#renderNotice` 說明);DOM 32 格在 3D 模式下是看不見、不攔滑鼠、鍵盤可 Tab 的無障礙層(焦點格 3D 盤上畫白框)。
+  three r128 改放同源 `vendor/three.r128.min.js`(sw 預快取,離線照樣開 3D)。🐾 動物改坐同 scene(`js/opponent.js`:矩形盤緣座位、相機對面、凳子落地、取景收到耳尖;手機橫向矮畫面藏)。
+  驗:`npm run test:core`(core-parity 161 / hidden-invariance 161 / board3d-geom 7841,純 node)、`npm run test:3d`(scripts/check-3d.mjs 139 條,真瀏覽器)、
+  browser-check 🐾 段改同 scene 斷言、check-fit / check-fold 改量 3D 盤角投影框(**舊量法在 3D 下量的是 1px 無障礙層 ⇒ 假綠**,已改)。
+- 🐾(v11 舊作法,**v12 已改成同 scene**,下面保留當歷史)- 🐾 **動物對手坐到棋盤對面(2026-09-28,verTag v11 / sw v13;skill `animal-opponent-kit` 第七個活例、CSS 斜視站的第一個)**:
   對戰 AI 時棋盤遠端上方坐著一隻會眨眼、會想棋、會說話的小動物——休閒 🐰 / 標準 🐱 / 高手 🐻;📅 每日同副牌 🦉;雙人同機不出現。
   ★ 本站棋盤是 CSS 斜視(DOM + rotateX),沒有 three 場景可以坐 ⇒ 牠住在 `.board-card` 裡一個**透明的 WebGL 小窗**(`#petWindow > canvas`,`js/opponent.js`):
   `petLayout()`(app.js)量棋盤投影框(`getBoundingClientRect` 含 rotateX/rotateZ/透視)把小窗貼在**遠端那條邊上方、置中**,`pointer-events:none`;
@@ -59,17 +79,24 @@
 | 檔 | 用途 |
 |---|---|
 | `index.html` / `styles.css` | 殼層與版面 |
-| `app.js` | 規則、3D 渲染、AI、提示 |
+| `app.js` | 狀態、輪次、AI 流程(派 Worker)、提示、DOM 無障礙層 / 平面退路、3D 接線 |
+| `banqi-core.js` | 規則 + 搜尋的唯一一份(v12 從 app.js 逐字抽出;瀏覽器 / Worker / node 共用) |
+| `ai-worker.js` | AI / 💡 提示搜尋執行緒(importScripts banqi-core.js) |
+| `js/scene3d.js` / `js/board3d.js` / `js/pieces3d.js` / `js/view-kit.js` / `js/three-full.js` | 🧊 真 3D:總控 / 底座(gomoku3d 來源 + 站內適配)/ 棋子與標記 / 視角面板(skill board3d-kit 同一份)/ three 門面 |
+| `vendor/three.r128.min.js` | three r128(同源,sw 預快取) |
 | `daily.js` | 每日同副牌 |
 | `js/animals.js` / `js/voice.js` / `js/three-shim.js` | 🐾 動物引擎 / 🗣 人聲 runtime / 全域 THREE→ESM shim(與 skill animal-opponent-kit/assets **同一份,不要在這裡改**;browser-check 對賬) |
-| `js/opponent.js` / `js/voicePhrases.js` | 本站的動物接線(透明 WebGL 小窗、誰坐、反應、閒聊、probe)與四隻的唸稿;`scripts/gen-voice.mjs` 烤 mp3 → `voice/`(`npm run voice`) |
+| `js/opponent.js` / `js/voicePhrases.js` | 本站的動物接線(v12 同 scene:矩形盤緣座位、誰坐、反應、閒聊、probe)與四隻的唸稿;`scripts/gen-voice.mjs` 烤 mp3 → `voice/`(`npm run voice`) |
 | `js/package.json` | 只給 node 看的 `{"type":"module"}`(repo 根是 commonjs) |
-| `sw.js` | Service Worker,`CACHE_NAME = "cloud-banqi-v13"`(v13 = 🐾 動物對手:+js 五支 + three CDN + voice 段)(改殼層檔必 +1;**名單/退路不可有 index.html,只認 `./`**;v8 = 提示不建議白做工的交換、v9 = 版本簡歷可收合(別場 0907 批次)、v10 = ▼ 收起選單(2026-09-14)) |
+| `sw.js` | Service Worker,`CACHE_NAME = "cloud-banqi-v14"`(v14 = 🧊 真 3D:+banqi-core / ai-worker / js 五支 / vendor three,CDN 拿掉;v13 = 🐾 動物對手:+js 五支 + three CDN + voice 段)(改殼層檔必 +1;**名單/退路不可有 index.html,只認 `./`**;v8 = 提示不建議白做工的交換、v9 = 版本簡歷可收合(別場 0907 批次)、v10 = ▼ 收起選單(2026-09-14)) |
 | `manifest.webmanifest` / `icons/` | PWA |
 | `test/daily.mjs` | `npm test`:每日牌組檢查 |
 | `scripts/browser-check.mjs` | 真瀏覽器冒煙檢查 |
 | `scripts/check-fold.mjs` | `npm run test:fold`:▼ 收起選單真點擊驗收(桌機+手機) |
 | `test/hint.mjs` | `npm run test:hint`:💡 提示品質(真瀏覽器,40 個隨機中局) |
+| `test/core-parity.mjs` / `test/hidden-invariance.mjs` / `test/board3d-geom.mjs` | `npm run test:core`(純 node):搬家不改棋力 / 交換暗子搜尋不變 / 3D 格↔世界↔點擊 80 視角 + 三反例 |
+| `scripts/check-3d.mjs` | `npm run test:3d`:v12 驗收(真座標點擊、規則、暗子反例、翻面分格、手勢、Worker、過期反例、重試、每日逐位元、螢幕 × DPR 矩陣、遷移、退路、資源、SW、離線) |
+| `test/fixtures/*.json` | 升級前 784d49e 錄的黃金檔(搜尋 40 局 / 每日 12 副 / 舊 CSS 視角四角方位)+ 重搜尋局面;產生器 `scripts/gen-*-golden.mjs`,**不要用新版重錄** |
 
 ## 跑起來 / 測試
 
@@ -79,7 +106,9 @@ npm test               # node test/daily.mjs(純 node,不用起站)
 py -m http.server 8797 # 下面三支真瀏覽器測試預設打 http://localhost:8797(或 CHECK_URL=線上網址)
 npm run test:hint      # node test/hint.mjs
 npm run test:fold      # node scripts/check-fold.mjs
-node scripts/browser-check.mjs   # 含 🐾 動物對手段(0928)
+node scripts/browser-check.mjs   # 含 🐾 動物對手段(v12 同 scene 斷言)
+npm run test:core      # 純 node:core-parity + hidden-invariance + board3d-geom
+npm run test:3d        # 真瀏覽器 v12 驗收(SHOTS=1 會把視角截圖存到 scripts/out/)
 npm run voice          # 🐾 烤動物人聲(要網路;累加式,已有的跳過)
 ```
 ✅ browser-check 的勝局鏈六條(T01 推到分出勝負 → T02 戰績記在第 1 副 → T03 結算訊息 → T04 接第 2 副 → T05 第 2 副是另一副牌 → T06 狀態行)**0928 修好**:
@@ -98,7 +127,7 @@ curl -s "https://darkchesscodex.pages.dev/sw.js?b=$RANDOM" | grep CACHE_NAME   #
 ```
 
 改了殼層檔先把 `sw.js` 的 `CACHE_NAME` 版本 +1 再部署,否則已安裝的 PWA 永遠看到舊版。
-部署後驗:`curl -s "https://darkchesscodex.pages.dev/js/opponent.js?b=$RANDOM" | head -c 60`(要是真內容不是首頁)、`CHECK_URL=https://darkchesscodex.pages.dev node scripts/browser-check.mjs`。
+部署後驗:`curl -s "https://darkchesscodex.pages.dev/js/scene3d.js?b=$RANDOM" | head -c 60`、`…/ai-worker.js`、`…/vendor/three.r128.min.js`(要是真內容不是首頁)、`CHECK_URL=https://darkchesscodex.pages.dev node scripts/browser-check.mjs`。
 
 ⚠ **SW 快取名單與離線退路不可以有 `index.html`(0914 全艦隊修,sw v12)**:Cloudflare Pages 把 `/index.html` 308 到 `/`,
 名單裡有它 install 就存到 redirected 回應,裝成 App 打開就 ERR_FAILED(3D-Chess 幻影版實錘)。一律只認 `./`;install 逐一 add+catch 不用 addAll。
@@ -108,6 +137,7 @@ curl -s "https://darkchesscodex.pages.dev/sw.js?b=$RANDOM" | grep CACHE_NAME   #
 
 作品集已收、`sites.json` 棋類已登。新功能上線後照 skill `portfolio-ledger-guard` 收尾。
 
+- 🟡 **🧊 原址升級真 3D(0929 HFP 機,verTag v12 / sw v14)**:本機全部測試綠(見「功能」第一條);**尚未部署**到 darkchesscodex、線上未驗、真機未驗(等使用者決定發布)。
 - ✅ **🐾 動物對手坐到棋盤對面(0928 HFP 機・Fable 5.1・0928-3D動物對手-象棋家族-家裡 場,verTag v11 / sw v13)**:見上面「功能」第一條;CSS 斜視站用透明 WebGL 小窗,同一套引擎 / 人聲。
 - ✅ **拔掉「index.html 進 SW 快取名單」地雷(0914 全艦隊,verTag v10 / sw v12)**:`APP_ASSETS` 拔 `./index.html`、退路 `caches.match("./")` 只給導覽請求、`addAll` → 逐一 `add().catch()`;線上 `check-sw-nav-fleet.mjs` 🟢(開 /index.html 兩次不 ERR_FAILED、快取無 redirected、離線回殼層)。見「部署」段的 ⚠。
 - ✅ **⛶ 放大真的放大 + 桌機 ⛶ + 手機橫向自動滿版(0914,v9 / sw v11)**:`body.fit-play`(app.js `syncFitPlay`/`fitBoard`/`bindFitPlay`,styles.css 檔尾)—— 沉浸或手機橫向時整頁一屏,棋盤用所有子孫的投影框聯集逐步縮放到剛好裝進 `.board-card`(`--fit-board-w` + `--fit-shift`);`#mfsExit` 是看得見的出口(同一個 toggle);「☰ 選單」= `body.panels-open` 暫回一般版面。驗:`CHECK_URL=… node scripts/check-fit.mjs`(本機預設 8797)。

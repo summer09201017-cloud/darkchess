@@ -285,7 +285,7 @@ export class PieceSet {
     for (const t of this.marks.targets) {
       if (t.type === "capture") {
         add(flat(this._mk.capGeo, this._mk.cap), t.to);
-        add(this._sprite(this._mk.capTex, p * 0.36), t.to, this.H * 2.6);
+        this._badge(this._sprite(this._mk.capTex, p * 0.4), t.to);
       } else {
         add(flat(this._mk.moveGeo, this._mk.move), t.to);
         const d = add(flat(this._mk.textGeo, this._mk.moveText), t.to, MARK_Y * 1.5);
@@ -294,11 +294,26 @@ export class PieceSet {
     }
     for (const i of this.marks.hint) {
       add(flat(this._mk.hintGeo, this._mk.hint), i, MARK_Y * 1.2);
-      add(this._sprite(this._mk.hintTex, p * 0.34), i, this.H * 3.3);
+      this._badge(this._sprite(this._mk.hintTex, p * 0.4), i);
     }
     if (this.marks.selected != null) add(flat(this._mk.selGeo, this._mk.sel), this.marks.selected, MARK_Y * 1.4);
     if (this.marks.focus != null) add(flat(this._mk.focusGeo, this._mk.focus), this.marks.focus, MARK_Y * 1.6);
     this._yaw = null;   // 讓字重新對齊相機
+  }
+
+  /** 「吃」/ 💡 小徽章:放在那一格「相機看過去的右上角」,不壓在棋子字上;相機一轉就跟著挪(update 裡) */
+  _badge(sprite, index) {
+    sprite.userData.badgeAt = index;
+    this.markRoot.add(sprite);
+    this._placeBadge(sprite, THREE.MathUtils.degToRad(this.board.yaw || 0));
+  }
+  _placeBadge(sprite, yaw) {
+    const i = sprite.userData.badgeAt;
+    const w = this.board.cellToWorld(Math.floor(i / 4), i % 4);
+    const k = this.R * 0.78;
+    const rx = Math.cos(yaw), rz = -Math.sin(yaw);      // 畫面右方(世界)
+    const fx = -Math.sin(yaw), fz = -Math.cos(yaw);     // 畫面上方 = 遠離相機
+    sprite.position.set(w.x + (rx + fx) * k, this.H * 2.2, w.z + (rz + fz) * k);
   }
 
   _sprite(tex, size) {
@@ -344,7 +359,10 @@ export class PieceSet {
     if (yaw !== this._yaw) {
       this._yaw = yaw;
       for (const it of this.items.values()) it.spin.rotation.y = yaw;
-      for (const m of this.markRoot.children) if (m.userData.faceYaw) m.rotation.z = yaw;
+      for (const m of this.markRoot.children) {
+        if (m.userData.faceYaw) m.rotation.z = yaw;
+        if (m.userData.badgeAt != null) this._placeBadge(m, yaw);
+      }
     }
     const sel = this.marks.selected;
     for (const it of this.items.values()) {

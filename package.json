@@ -10,7 +10,9 @@
     "test": "node test/daily.mjs",
     "test:hint": "node test/hint.mjs",
     "test:fold": "node scripts/check-fold.mjs",
-    "voice": "node scripts/gen-voice.mjs --phrases js/voicePhrases.js --out voice --sw sw.js"
+    "voice": "node scripts/gen-voice.mjs --phrases js/voicePhrases.js --out voice --sw sw.js",
+    "test:core": "node test/core-parity.mjs && node test/hidden-invariance.mjs && node test/board3d-geom.mjs",
+    "test:3d": "node scripts/check-3d.mjs"
   },
   "repository": {
     "type": "git",

@@ -19,7 +19,7 @@ const section = (t) => console.log("  · " + t);
 /* 跟 js/scene3d.js 建盤的參數一模一樣 */
 function fakeBoard({ aspect = 1.5, yaw = 0, view = "top", pitch = null } = {}) {
   const b = Object.create(Board3D.prototype);
-  b.opt = { cols: 4, rows: 8, mode: "cell", pitch: 0.3, margin: 0.55, centerFit: true };
+  b.opt = { cols: 4, rows: 8, mode: "cell", pitch: 0.3, margin: 0.55, centerFit: true, fitSlab: true, fitExtraMax: 1.22 };
   b.cols = 4; b.rows = 8; b.view = view; b.yaw = yaw; b.pitchOverride = null;
   b.target = new THREE.Vector3(0, 0, 0);
   b.camera = new THREE.PerspectiveCamera(38, aspect, 0.05, 60);

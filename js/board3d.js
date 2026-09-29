@@ -262,6 +262,8 @@ export class Board3D {
     const pts = [];
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
       pts.push({ p: new THREE.Vector3(sx * this.halfX, TABLE_Y, sz * this.halfZ), ex: FIT_EDGE_X, ey: FIT_EDGE_Y });
+      // 站內適配 ⑦:低視角(34°)時盤身前側面 + 木框會露在盤面下緣之下 ⇒ 盤底四角也收進來(不然前緣貼到畫布底)
+      if (this.opt.fitSlab) pts.push({ p: new THREE.Vector3(sx * (this.halfX + 0.05), TABLE_Y - THICK - 0.045, sz * (this.halfZ + 0.05)), ex: FIT_EDGE_X, ey: FIT_EDGE_Y });
     }
     /* ★ 站內適配 ⑥(雲臺暗棋 v12):opt.centerFit = 取景「垂直置中」。
        底座把盤心釘在畫面正中 ⇒ 動物頭頂(fitExtra)只在上面,上下卻各縮一份,桌機沉浸版棋盤只剩 50% 高。
