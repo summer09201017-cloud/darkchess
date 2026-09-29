@@ -247,24 +247,36 @@ select[disabled] {
 }
 
 .board-card {
+  position: relative;
   padding: clamp(0.8rem, 1.7vw, 1.25rem);
   overflow: hidden;
-  /* 🐾 動物小窗要的位子:app.js petLayout() 量完寫進 --pet-reserve,卡片頂端多留這麼高(fit-play 版面的 padding:6px 在檔尾會蓋掉它,那邊由 fitBoard 預留) */
-  padding-top: calc(clamp(0.8rem, 1.7vw, 1.25rem) + var(--pet-reserve, 0px));
 }
 
-/* ══════════ 🐾 動物對手(2026-09-28,skill animal-opponent-kit;本站是 CSS 斜視棋盤 ⇒ 透明 WebGL 小窗)══════════ */
-.pet-window {
-  position: absolute; z-index: 2; pointer-events: none;
-  left: 0; top: 0; width: 120px; height: 150px;
+/* ══════════ 🧊 v12 真 3D(2026-09-29):棋盤 + 棋子 + 動物都在 #board3d 這一張畫布(js/scene3d.js)══════════
+   body.has-3d 由 app.js 在 3D 建成功後才套;建不起來 / 中途 context lost 就拿掉 ⇒ 下面的 DOM 平面棋盤自動回來。
+   ★ 3D 模式下 #boardStage(32 格按鈕)變成「看不見、不攔滑鼠、鍵盤可 Tab」的無障礙操作層 —— 不是透明蓋在畫布上的假棋盤。 */
+.board3d { display: none; position: relative; width: 100%; height: clamp(360px, 74vh, 860px); border-radius: 20px; overflow: hidden; background: #0f2a26; }
+body.has-3d .board3d { display: block; }
+/* ▼ 收起選單:4×8 直長盤在桌機是「高度」頂住的(寬度多出來也不會變大)⇒ 收起時把畫布拉高,棋盤才真的拿回空間(check-fold ② 量盤角投影框) */
+body.menu-folded .board3d { height: clamp(360px, 88vh, 1000px); }
+.board3d canvas { display: block; width: 100%; height: 100%; touch-action: none; outline: none; }
+body.has-3d .board-stage {
+  position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: 0 !important;
+  overflow: hidden !important; clip-path: inset(50%); white-space: nowrap; pointer-events: none !important; transform: none !important;
 }
-.pet-window[hidden] { display: none; }
-.pet-window canvas { display: block; width: 100%; height: 100%; }
-.pet-window__tag {
-  position: absolute; left: 50%; top: 0; transform: translateX(-50%);
-  font-size: 0.74rem; line-height: 1.2; white-space: nowrap; color: var(--muted);
-  padding: 1px 7px; border-radius: 999px; background: rgba(9, 15, 19, 0.55);
+body.has-3d .field--legacy-view { display: none; }
+.view-toggle { position: absolute; left: 10px; top: 10px; z-index: 3; min-height: 44px; padding: 0.45rem 0.9rem; font-size: 0.92rem; }
+.view-panel {
+  position: absolute; left: 10px; top: 62px; z-index: 4; width: min(300px, calc(100% - 20px)); max-height: calc(100% - 72px); overflow: auto;
+  padding: 12px; border-radius: 16px; border: 1px solid var(--panel-border); background: rgba(8, 21, 19, 0.93); color: var(--text);
+  --vk-accent: #d89d47; --vk-bg: rgba(255, 255, 255, 0.06); --vk-line: rgba(195, 170, 112, 0.35); --vk-fg: #f7efe0;
 }
+.view-panel[hidden] { display: none; }
+.view-panel__close { position: absolute; right: 8px; top: 8px; min-width: 44px; min-height: 44px; padding: 0; }
+.render-notice { margin: 0.5rem 0 0; padding: 0.55rem 0.8rem; border-radius: 12px; background: rgba(216, 157, 71, 0.16); border: 1px solid rgba(216, 157, 71, 0.45); font-size: 0.9rem; }
+.render-notice[hidden] { display: none; }
+#retryAiButton { min-height: 44px; }
+#retryAiButton[hidden] { display: none; }
 .pet-controls { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.45rem; }
 .pet-controls .button { padding: 0.6rem 0.35rem; font-size: 0.82rem; line-height: 1.2; min-height: 2.75rem; }
 .pet-controls .button[aria-pressed="true"] {
@@ -845,3 +857,8 @@ body.fit-play:not(.panels-open) .board { width: var(--fit-board-w, min(96vw, 32.
 }
 /* 桌機也有右上角固定的 ⛶ 了(42px):標題列右邊讓出位子 */
 .hero { padding-right: 64px; }
+
+/* 🧊 v12:fit-play(沉浸 / 手機橫向)時 3D 畫布吃滿棋盤卡(Board3D 的 ResizeObserver 會自己重新取景,不用 fitBoard 量 DOM) */
+body.fit-play.has-3d:not(.panels-open) .board-card { display: block; }
+body.fit-play.has-3d:not(.panels-open) .board3d { height: 100%; border-radius: 12px; }
+body.fit-play.has-3d:not(.panels-open) .render-notice { position: absolute; left: 12px; right: 12px; bottom: 12px; margin: 0; }

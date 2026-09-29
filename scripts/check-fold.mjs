@@ -37,7 +37,7 @@ async function settle(page) {
     null, { timeout: 6000 },
   ).catch(() => {});
   try {
-    await page.waitForFunction(() => !!window.__banqi, null, { timeout: 20000 });
+    await page.waitForFunction(() => !!window.__banqi && window.__banqi.rendererMode !== "pending", null, { timeout: 20000 });
   } catch {
     console.error("🔴 window.__banqi 沒出現,app.js 載入時就出錯了:");
     console.error(errors.length ? errors.join("\n") : "(沒抓到 pageerror,檢查 script 有沒有 404)");
@@ -49,8 +49,11 @@ async function settle(page) {
 
 function snap(page) {
   return page.evaluate((key) => {
-    const board = document.querySelector("#board");
-    const rect = board.getBoundingClientRect();
+    /* 🧊 v12:3D 模式的 #board 是 1px 的無障礙層(量它等於量空氣,0929 發現這支因此「假綠」)⇒ 量真的東西:
+       畫布外框寬(boardW)與 Board3D 四個盤角的投影框(boardBox);平面退路才量 #board。 */
+    const R3 = window.__banqi && window.__banqi.renderer;
+    const board = R3 ? document.querySelector("#board3d") : document.querySelector("#board");
+    const rect = R3 ? (({ w, h }) => ({ width: w, height: h }))(R3.boardScreenBox()) : board.getBoundingClientRect();
     const info = document.querySelector(".info-column");
     const panels = Array.from(document.querySelectorAll(".info-column .panel.card"));
     const btn = document.querySelector("#menuFoldButton");
@@ -119,7 +122,7 @@ for (const vp of VIEWPORTS) {
     ok(s1.docH < s0.docH, `② 手機整頁變短(${s0.docH}→${s1.docH}px)`);
   } else {
     // 桌機是雙欄:收掉右欄後棋盤放大(4×8 直棋盤,變寬就變高),整頁高度不會變短 ⇒ 驗「真的變大」
-    ok(s1.boardW > s0.boardW, `② 桌機棋盤真的變大(${s0.boardW}→${s1.boardW}px)`);
+    ok(s1.boardW > s0.boardW && s1.boardBox.w > s0.boardBox.w, `② 桌機棋盤真的變大(外框 ${s0.boardW}→${s1.boardW}px;盤角投影 ${s0.boardBox.w}→${s1.boardBox.w}px)`);
   }
   ok(s1.stored === "1", "② localStorage 記成 1", `stored=${s1.stored}`);
   ok(s1.btnVisible, "② 收起後鈕自己還在(沒把自己藏掉)", JSON.stringify(s1.btnBox));

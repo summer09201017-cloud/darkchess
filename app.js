@@ -79,6 +79,12 @@ const elements = {
   poolSummary: document.querySelector("#poolSummary"),
   boardHelp: document.querySelector("#boardHelp"),
   menuFoldButton: document.querySelector("#menuFoldButton"),   // ▼ 收起選單 / ▲ 展開選單(狀態卡那一行)
+  board3dHost: document.querySelector("#board3d"),            // 🧊 v12 真 3D 畫布外框
+  board3dCanvas: document.querySelector("#board3dCanvas"),
+  viewButton: document.querySelector("#viewButton"),          // 🎥 視角(開合浮動面板)
+  viewPanel: document.querySelector("#viewPanel"),
+  retryAiButton: document.querySelector("#retryAiButton"),    // AI 逾時 / 出錯時才出現
+  renderNotice: document.querySelector("#renderNotice"),      // 3D 開不起來 / 中斷的說明
 };
 
 /* 📱 內建瀏覽器偵測(守門 #30):教會連結走 LINE 發,LINE 的 WebView 裝不了 APP
@@ -100,6 +106,21 @@ let state = createInitialState(loadSettings());
 /* 🐾 動物對手(0928,skill animal-opponent-kit):引擎 js/animals.js 是 ES module,經 index.html 的 PetKit 橋接進來;
    pet 在 initPet() 才建(橋接還沒好就等 pet-kit-ready)。⚠ 跟 MENU_FOLD_KEY 同理:宣告要在 bootstrap() 之前(TDZ)。 */
 let pet = null;
+/* 🧊 v12 真 3D 的執行期狀態 —— 全部要宣告在 bootstrap() 之前(TDZ;bootstrap 一開場就 render,會讀到它們) */
+let renderer3d = null;          // js/scene3d.js 的控制器;平面退路時 null
+let rendererMode = "pending";   // pending(等模組)/ 3d / flat
+let animBusy = false;           // 3D 正在播一手的動畫:棋盤不收點擊、AI 也等它播完
+let gameGen = 0;                // 每開一局 +1:舊動畫 / 舊計時器 / 舊搜尋回來時一比就知道過期
+let keyboardFocusIndex = null;  // 鍵盤焦點在哪一格(3D 盤上畫白框)
+let petListenersBound = false;
+const VIEW3D_KEY = "cloud-banqi-3d-view-v1";
+const R3D_NOTICE_INIT = "此裝置暫時無法顯示 3D，已切換平面棋盤，這局可以繼續。";
+const R3D_NOTICE_LOST = "3D 畫面已中斷，已切換平面棋盤，這局可以繼續。";
+let idleQueue = [];
+const SEARCH_TIMEOUT_MS = 10000;
+const AI_MIN_DELAY_MS = 220;   // 沿用 v11:AI 至少「想」220ms 才下,不會快到像沒想
+const search = { worker: null, gen: 0, reqId: 0, pending: null };
+const searchHooks = { delayMs: 0, fail: false, hang: false };   // 測試用(scripts/check-3d.mjs 過期 / 逾時反例);真人用不到
 const dragState = {
   active: false,
   moved: false,
@@ -145,33 +166,313 @@ window.__banqi = {
   applyMenuFold,     // ▼ 收起選單(scripts/check-fold.mjs 只讀狀態、用真點擊切換;這把手留給診斷)
   get menuFolded() { return document.body.classList.contains("menu-folded"); },
   get pet() { return pet; },   // 🐾 動物對手(browser-check 🐾 段用;沒橋接成功就是 null)
+  /* 🧊 v12 真 3D(scripts/check-3d.mjs 用):渲染器、動畫鎖、世代、公開資訊、搜尋測試開關 */
+  get renderer() { return renderer3d; },
+  get rendererMode() { return rendererMode; },
+  get animBusy() { return animBusy; },
+  get gameGen() { return gameGen; },
+  get search() { return { gen: search.gen, reqId: search.reqId, pending: Boolean(search.pending), worker: Boolean(search.worker) }; },
+  searchHooks,
+  publicCells: () => publicCells(),
+  loadView3d,
+  migrateView3d,
+  retryAi,
+  showHint,
+  get keyboardFocusIndex() { return keyboardFocusIndex; },
 };
 
-/* ═══════════ 🐾 動物對手(2026-09-28,skill animal-opponent-kit;正本 majiang3d、範本 gomoku3d、老站範式 3D-Xiangqi)═══════════
-   本站棋盤是 CSS 斜視(DOM + rotateX),沒有 three 場景 ⇒ 牠住在 .board-card 裡一個透明的 WebGL 小窗(#petWindow,js/opponent.js),
-   petLayout() 量棋盤投影框(getBoundingClientRect 含 rotateX/rotateZ/透視)把小窗貼在**遠端那條邊上方、置中**,pointer-events:none。
-   一般版面:卡片頂端多留 --pet-reserve 讓位(styles.css);fit-play 版面:fitBoard() 從可用高度扣 petReserve()(卡片矮於 480 就藏,不縮棋盤)。
-   反應跟 AI 流程同一個分岔:AI 開算 think / 翻到自己的子 hop(對方的 shrug)/ 吃你的子 hop+「吃掉了」/ 走位 place / 你吃牠的子 gasp+「哇」/
-   一局結束 win・lose(每局一次);等你太久閒聊。純觀感:不碰規則、不碰 AI、不擋點擊。 */
-function initPet() {
-  const build = () => {
-    const PK = window.PetKit;
-    const win = document.querySelector("#petWindow");
-    if (!PK || !win || pet) return;
+/* ═══════════ 🧊 真 3D 呈現層(v12,2026-09-29;規格 dark-3d-spec-draft.md)═══════════
+   棋盤、32 枚棋子、動物對手都在同一個 three scene 裡(js/scene3d.js,ES module ⇒ 經 index.html 橋接成 window.Banqi3D)。
+   分工:這支(app.js)仍是**唯一**的規則狀態與輪次;3D 層只拿「已公開的資訊」(publicCells)照畫,動畫播完才 resolve。
+   ★ 暗子:publicCells 對暗子只給 { hidden:true },沒有 side/type/牌 id ⇒ 3D 層想洩漏也沒得洩漏。
+   ★ 一手的順序:規則先提交(applyActualAction + turnCount)→ 鎖棋盤(animBusy)→ 3D 播動畫 → 播完解鎖、才輪到下一手 / AI 走。
+   ★ 平面退路:WebGL 開不起來 / 中途 context lost ⇒ 卸掉 3D、回到既有 DOM 平面棋盤(#board),同一局、同一個 state,繼續下。
+   ★ 無障礙:DOM 的 32 格按鈕一直都在(同一份 state 生成);3D 模式下它是看不見、不攔滑鼠(pointer-events:none)但鍵盤可 Tab 的操作層,
+     Enter / Space 翻子走子照舊;焦點在哪一格,3D 盤上就畫一圈白框。 */
+
+/** 32 格的公開資訊:空格 null;暗子只有 {hidden:true};明子才有 id/side/type/字 */
+function publicCells(targetState = state) {
+  return targetState.board.map((pieceId) => {
+    if (pieceId === null || pieceId === undefined) return null;
+    const piece = targetState.pieces[pieceId];
+    if (!piece.revealed) return { hidden: true };
+    return { id: piece.id, side: piece.side, type: piece.type, label: pieceLabelFor(piece) };
+  });
+}
+
+/** 3D 盤面標記:選取 / 可走可吃 / 上一手 / 💡 / 鍵盤焦點 */
+function marksFor() {
+  const hint = getActiveHintAction();
+  const hintIdx = !hint ? [] : hint.type === "flip" ? [hint.index] : [hint.from, hint.to];
+  return {
+    selected: state.selectedIndex,
+    targets: state.legalTargets.map((action) => ({ type: action.type, to: action.to })),
+    last: getActionIndexes(state.lastAction),
+    hint: hintIdx,
+    focus: keyboardFocusIndex,
+  };
+}
+
+/* ── 視角設定:新鍵 cloud-banqi-3d-view-v1;第一次沒有新鍵時從舊的 CSS 視角(settings.viewSpin/viewTilt/perspective)換算 ──
+   舊 CSS:rotateX(tilt) 讓棋盤往後倒(tilt 0 = 正上方看),rotateZ(spin) 順時針轉;
+   新相機:pitch = 俯視角度(90 = 正上方),yaw 正向 = 相機繞盤逆時針 = 畫面上棋盤順時針 ⇒ pitch = 90 − tilt、yaw = spin。
+   四角投影驗過符號(scripts/check-3d.mjs「舊視角遷移」段);預設 tilt44/spin350 ⇒ yaw 350、俯角 46°。 */
+function loadView3d() {
+  try {
+    const raw = localStorage.getItem(VIEW3D_KEY);
+    if (raw) {
+      const v = JSON.parse(raw);
+      if (v && v.version === 1 && ["top", "flat", "sit", "custom"].includes(v.preset) && Number.isFinite(v.yaw)
+        && (v.pitch === null || Number.isFinite(v.pitch))) {
+        return { preset: v.preset, yaw: normalizeAngle(v.yaw), pitch: v.pitch === null ? null : clamp(v.pitch, 20, 88) };
+      }
+    }
+  } catch (error) { /* 壞 JSON / storage 被擋:退回舊設定換算 */ }
+  return migrateView3d(loadSettings());
+}
+function migrateView3d(settings) {
+  if (!settings || typeof settings !== "object") return { preset: "top", yaw: 0, pitch: null };
+  if (settings.perspective === "flat") return { preset: "flat", yaw: 0, pitch: null };
+  const hasSpin = Number.isFinite(settings.viewSpin), hasTilt = Number.isFinite(settings.viewTilt);
+  if (settings.perspective === "angled" || hasSpin || hasTilt) {
+    const spin = normalizeAngle(hasSpin ? settings.viewSpin : DEFAULT_VIEW.spin);
+    const tilt = hasTilt ? settings.viewTilt : DEFAULT_VIEW.tilt;
+    return { preset: "custom", yaw: spin, pitch: clamp(90 - tilt, 20, 88) };
+  }
+  return { preset: "top", yaw: 0, pitch: null };
+}
+function saveView3d(v) {
+  try { localStorage.setItem(VIEW3D_KEY, JSON.stringify({ version: 1, preset: v.preset, yaw: v.yaw, pitch: v.pitch })); }
+  catch (error) { /* 私密模式:這場有效 */ }
+}
+
+function init3d() {
+  const start = () => {
+    if (renderer3d || rendererMode === "flat") return;
+    const B = window.Banqi3D;
+    if (!B) { fallbackToFlat(R3D_NOTICE_INIT); return; }
     try {
-      const voice = PK.createVoice({ muted: () => false });   // 這站沒有 🔊 音效開關 ⇒ 只看 🐾 三段
-      pet = new PK.Opponent(win, voice);
+      renderer3d = B.create({
+        host: elements.board3dHost,
+        canvas: elements.board3dCanvas,
+        viewButton: elements.viewButton,
+        viewPanel: elements.viewPanel,
+        initialView: loadView3d(),
+        onTap: (index) => handleCellClick(index),
+        onViewChange: saveView3d,
+        onContextLost: () => fallbackToFlat(R3D_NOTICE_LOST),
+      });
     } catch (error) {
-      console.warn("🐾 動物對手建不起來(沒 WebGL?),棋照下", error);
+      console.warn("🧊 3D 建不起來,改用平面棋盤", error);
+      renderer3d = null;
+      fallbackToFlat(R3D_NOTICE_INIT);
       return;
     }
-    pet.onTick = petLayout;   // 每 ~250ms 重量棋盤投影框(拖曳旋轉 / 過渡動畫時小窗要跟著)
-    document.querySelectorAll("#petControls [data-pet]").forEach((button) => {
-      button.addEventListener("click", () => { pet.setMode(button.dataset.pet); syncPet(); renderStatus(); });
+    rendererMode = "3d";
+    document.body.classList.add("has-3d");
+    renderer3d.reset(publicCells());
+    renderer3d.setMarks(marksFor());
+    initPet();
+    render({ fullBoard: true });
+  };
+  if (window.Banqi3D) start();
+  else {
+    window.addEventListener("banqi3d-ready", start, { once: true });
+    window.addEventListener("banqi3d-failed", () => fallbackToFlat(R3D_NOTICE_INIT), { once: true });
+    // 模組檔抓不到(離線沒快取 / 伺服器回首頁冒充 JS)時兩個事件都不會來 ⇒ 保底計時,不讓棋盤空著
+    setTimeout(() => { if (!renderer3d && rendererMode === "pending") fallbackToFlat(R3D_NOTICE_INIT); }, 8000);
+  }
+}
+
+/** 3D 開不起來 / 中途掛掉:卸掉 renderer、取消動畫,用 DOM 平面棋盤接著下(同一個 state,不另起局) */
+function fallbackToFlat(notice) {
+  const wasBusy = animBusy;
+  if (renderer3d) { try { renderer3d.dispose(); } catch (error) { /* 已經壞了 */ } }
+  renderer3d = null;
+  pet = null;
+  rendererMode = "flat";
+  animBusy = false;
+  document.body.classList.remove("has-3d", "pet-on");
+  if (elements.renderNotice) { elements.renderNotice.textContent = notice; elements.renderNotice.hidden = false; }
+  render({ fullBoard: true });
+  if (wasBusy) flushIdle();
+}
+
+/* ── 動畫鎖:3D 播動畫時棋盤不收點擊;AI 的那一手也要等畫面播完才下 ── */
+function present(action, { deferStatus = false } = {}) {
+  if (!renderer3d) { render(); flushIdle(); return; }
+  const gen = gameGen;
+  animBusy = true;
+  renderer3d.setMarks(marksFor());
+  const done = renderer3d.sync(publicCells(), action);
+  /* ★ 翻面:朗讀內容(狀態訊息、那一格的 aria)等越過翻面中點才更新 —— 前半段畫面上還是背面,文字不能先講出來 */
+  if (deferStatus) setTimeout(() => { if (gen === gameGen) render(); }, prefersReducedMotion() ? 20 : 170);
+  else render();
+  done.then(() => {
+    if (gen !== gameGen) return;
+    animBusy = false;
+    render();
+    flushIdle();
+  });
+}
+function whenIdle(fn) { if (!animBusy) fn(); else idleQueue.push(fn); }
+function flushIdle() { const q = idleQueue; idleQueue = []; q.forEach((fn) => { try { fn(); } catch (error) { console.error(error); } }); }
+function prefersReducedMotion() {
+  try { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (error) { return false; }
+}
+
+/* ═══════════ 🧠 AI / 💡 提示搜尋 → Web Worker(v12)═══════════
+   搜尋本體是 banqi-core.js 同一支 chooseAiAction / chooseHintAction(三檔深度 / 隨機性 / 提示品質一個字沒改),只是搬到 ai-worker.js 跑,
+   主執行緒在 AI 想棋時照樣能轉視角、播動畫。
+   ★ 過期守門:每個請求帶 gen(這一局)/ reqId(最新那個)/ turnCount / turnSide / purpose;回來時任何一項對不上就丟 ——
+     重開 / 切模式 / 切每日 / 換難度都讓舊請求失效(gomoku3d「世代守門」同一招)。回來的那一手還要再對一次合法手清單。
+   ★ 10 秒沒回 / Worker 報錯 / 建不起來 ⇒ 結束「思考中」但保留輪次,顯示「重試 AI」;棋盤不讓玩家代 AI 走,也不判輸。
+   ★ 送進 Worker 的只有純資料(structuredClone 得過):board / pieces / 輪次 / 難度 / 手數;沒有 DOM、installPrompt、three 物件。 */
+
+function searchPayload(purpose) {
+  return {
+    board: [...state.board],
+    pieces: state.pieces.map((piece) => ({ ...piece })),
+    turnSide: state.turnSide,
+    humanSide: state.humanSide,
+    aiSide: purpose === "hint" ? state.turnSide : state.aiSide,
+    mode: state.mode,
+    difficulty: state.difficulty,
+    turnCount: state.turnCount,
+  };
+}
+function ensureWorker() {
+  if (search.worker) return search.worker;
+  const worker = new Worker("./ai-worker.js");   // 建不起來會丟例外,由 requestSearch 接住
+  worker.onmessage = (event) => onSearchReply(event.data || {});
+  worker.onerror = (event) => {
+    if (event && event.preventDefault) event.preventDefault();
+    const pending = search.pending;
+    killWorker();
+    if (pending) finishSearch(pending, { error: "worker error" });
+  };
+  search.worker = worker;
+  return worker;
+}
+function killWorker() {
+  if (search.worker) { try { search.worker.terminate(); } catch (error) { /* ignore */ } }
+  search.worker = null;
+}
+/** 讓所有還在飛的搜尋失效(重開 / 切模式 / 切每日 / 換難度) */
+function invalidateSearch() {
+  search.gen += 1;
+  dropPending();
+  state.hintBusy = false;
+}
+/** 丟掉還在飛的請求(被新請求取代 / 失效):一定叫它的 onSettle,忙碌狀態(💡 鈕)才不會卡住 */
+function dropPending() {
+  const req = search.pending;
+  if (!req) return;
+  clearTimeout(req.timer);
+  search.pending = null;
+  settle(req);
+}
+function settle(req) {
+  if (req.settled) return;
+  req.settled = true;
+  if (typeof req.onSettle === "function") { try { req.onSettle(); } catch (error) { console.error(error); } }
+}
+function requestSearch(purpose, onAction, onFail, onSettle) {
+  dropPending();
+  search.reqId += 1;
+  const req = {
+    gen: search.gen, reqId: search.reqId, purpose, turnCount: state.turnCount, turnSide: state.turnSide,
+    game: gameGen, onAction, onFail, onSettle, settled: false, sentAt: performance.now(), timer: 0,
+  };
+  search.pending = req;
+  req.timer = setTimeout(() => {
+    if (search.pending !== req) return;
+    killWorker();                                   // 卡住的 Worker 換新的,重試才不會又排在它後面
+    finishSearch(req, { error: "timeout" });
+  }, SEARCH_TIMEOUT_MS);
+  if (searchHooks.hang) return;                     // 測試:模擬永遠不回
+  if (searchHooks.fail) { setTimeout(() => finishSearch(req, { error: "forced" }), 10); return; }
+  try {
+    ensureWorker().postMessage({
+      gen: req.gen, reqId: req.reqId, purpose, turnCount: req.turnCount, turnSide: req.turnSide,
+      state: searchPayload(purpose),
     });
-    document.addEventListener("pointerdown", () => pet.noteInput(), true);
-    document.addEventListener("keydown", () => pet.noteInput(), true);
-    window.addEventListener("resize", () => requestAnimationFrame(petLayout));
+  } catch (error) {
+    console.warn("🧠 Worker 建不起來 / 送不出去", error);
+    setTimeout(() => finishSearch(req, { error: "no worker" }), 0);
+  }
+}
+function onSearchReply(msg) {
+  const req = search.pending;
+  if (!req || msg.gen !== req.gen || msg.reqId !== req.reqId || msg.purpose !== req.purpose) return;   // 過期:丟
+  const deliver = () => finishSearch(req, msg);
+  if (searchHooks.delayMs > 0) setTimeout(deliver, searchHooks.delayMs); else deliver();
+}
+function finishSearch(req, msg) {
+  if (search.pending !== req) return;               // 已經被取代 / 失效
+  clearTimeout(req.timer);
+  search.pending = null;
+  settle(req);
+  // ★ 再對一次:還是這一局、這一手、同一邊
+  if (req.gen !== search.gen || req.game !== gameGen || req.turnCount !== state.turnCount || req.turnSide !== state.turnSide) return;
+  if (msg.error) { req.onFail(msg.error); return; }
+  const action = msg.action || null;
+  if (action) {
+    const side = req.purpose === "hint" ? state.turnSide : state.aiSide;
+    const legal = getLegalActions(state, side).some((a) => JSON.stringify(a) === JSON.stringify(action));
+    if (!legal) { req.onFail("illegal"); return; }
+  }
+  req.onAction(action, req);
+}
+
+/** AI 回合:派 Worker 算;算好了、動畫也播完了才下(至少 220ms) */
+function requestAiTurn() {
+  if (elements.retryAiButton) elements.retryAiButton.hidden = true;
+  requestSearch("ai", (action, req) => {
+    const wait = Math.max(0, AI_MIN_DELAY_MS - (performance.now() - req.sentAt));
+    const gen = gameGen;
+    setTimeout(() => whenIdle(() => { if (gen === gameGen) runAiTurn(action); }), wait);
+  }, () => {
+    state.aiThinking = false;
+    if (pet) pet.cancel();
+    state.message = "AI 暫時無法回應，棋局已保留。請按「重試 AI」。";
+    if (elements.retryAiButton) elements.retryAiButton.hidden = false;
+    render();
+  });
+}
+function retryAi() {
+  if (state.winner || state.mode !== "ai" || state.turnSide !== state.aiSide || state.aiThinking) return;
+  state.aiThinking = true;
+  state.message = "";
+  renderStatus();
+  if (pet) pet.think();
+  requestAiTurn();
+}
+
+/* ═══════════ 🐾 動物對手(2026-09-28 v11 起;v12 搬進同一個 3D scene)═══════════
+   引擎 js/animals.js(skill animal-opponent-kit 同一份),本站接線 js/opponent.js:牠坐在矩形盤緣、永遠在相機對面、凳子落地。
+   反應跟 AI 流程同一個分岔:AI 開算 think / 翻到自己的子 hop(對方的 shrug)/ 吃你的子 hop+「吃掉了」/ 走位 place / 你吃牠的子 gasp+「哇」/
+   一局結束 win・lose(每局一次);等你太久閒聊。純觀感:不碰規則、不碰 AI、不擋點擊。平面退路沒有動物。 */
+function initPet() {
+  if (pet || !renderer3d) return;
+  const build = () => {
+    const PK = window.PetKit;
+    if (!PK || pet || !renderer3d) return;
+    try {
+      const voice = PK.createVoice({ muted: () => false });   // 這站沒有 🔊 音效開關 ⇒ 只看 🐾 三段
+      pet = renderer3d.attachPet(voice);
+    } catch (error) {
+      console.warn("🐾 動物對手建不起來,棋照下", error);
+      return;
+    }
+    if (!petListenersBound) {
+      petListenersBound = true;
+      document.querySelectorAll("#petControls [data-pet]").forEach((button) => {
+        button.addEventListener("click", () => { if (!pet) return; pet.setMode(button.dataset.pet); syncPet(); renderStatus(); });
+      });
+      document.addEventListener("pointerdown", () => { if (pet) pet.noteInput(); }, true);
+      document.addEventListener("keydown", () => { if (pet) pet.noteInput(); }, true);
+    }
     seatPet();
   };
   if (window.PetKit) build();
@@ -179,12 +480,12 @@ function initPet() {
 }
 /** 每局開始 / 換難度:誰坐由模式 + 難度 + 每日決定(雙人同機不坐、每日 = 🦉) */
 function seatPet() {
-  if (!pet || !window.PetKit) return;
-  pet.seat(window.PetKit.animalFor(state.mode, state.difficulty, Boolean(state.dailyKey)));
+  if (!pet || !renderer3d) return;
+  pet.seat(renderer3d.animalFor(state.mode, state.difficulty, Boolean(state.dailyKey)));
   syncPet();
   renderStatus();
 }
-/** 每次 render:告訴牠是不是在等你、三段鈕亮哪顆、body.pet-on、重擺小窗 */
+/** 每次 render:告訴牠是不是在等你、三段鈕亮哪顆、body.pet-on */
 function syncPet() {
   if (!pet) return;
   const waiting = state.mode === "ai" && !state.winner && !state.aiThinking
@@ -194,46 +495,6 @@ function syncPet() {
     button.setAttribute("aria-pressed", String(button.dataset.pet === pet.mode));
   });
   document.body.classList.toggle("pet-on", pet.on);
-  petLayout();
-}
-/** fit-play 時從 .board-card 頂端留給小窗的高度(px);卡片矮於 480 就 0(藏起來、棋盤不縮) */
-function petReserve() {
-  if (!pet || !pet.on || !fitPlayActive()) return 0;
-  const wrap = document.querySelector(".board-card");
-  if (!wrap || wrap.clientHeight < 480) return 0;
-  return Math.round(clamp(wrap.clientHeight * 0.2, 90, 170));
-}
-/** 把小窗貼在棋盤投影框的遠端那條邊上方、置中(頁面 px → 相對 .board-card) */
-function petLayout() {
-  if (!pet) return;
-  const wrap = document.querySelector(".board-card");
-  if (!wrap) return;
-  if (!pet.on) { wrap.style.setProperty("--pet-reserve", "0px"); pet.hide(); return; }
-  const OVERLAP = 8;   // 凳子壓到棋盤木框 8px(木框 ≥ 10px、格子在更裡面),看起來是坐在桌邊,不蓋任何格子
-  let petW, petH;
-  if (fitPlayActive()) {
-    const reserve = petReserve();
-    if (!reserve) { pet.hide(); return; }
-    petH = reserve - 2 + OVERLAP;
-    petW = Math.round(petH / 1.25);
-  } else {
-    const bw = elements.board.getBoundingClientRect().width;
-    if (!bw) { pet.hide(); return; }
-    petW = clamp(Math.round(bw * 0.28), 96, 200);
-    petH = Math.round(petW * 1.25);
-    wrap.style.setProperty("--pet-reserve", `${petH - OVERLAP + 2}px`);   // 設完馬上重量:padding 沒有 transition,同步就生效
-  }
-  const b = elements.board.getBoundingClientRect();
-  const wr = wrap.getBoundingClientRect();
-  if (!b.width || !wr.width) { pet.hide(); return; }
-  /* 小窗的底:壓到木框 OVERLAP px 可以,但**不可以壓到任何一格**(遠端那排格子的投影框最高點再往上 2px;
-     直向手機木框只有 ~10px、格子的投影框會貼到木框邊,只看木框會蓋到半格 —— browser-check 🐾 抓到的)。 */
-  let cellsTop = Infinity;
-  for (const cell of elements.board.querySelectorAll(".cell")) { const r = cell.getBoundingClientRect(); if (r.width && r.top < cellsTop) cellsTop = r.top; }
-  const bottom = Math.min(b.top + OVERLAP, Number.isFinite(cellsTop) ? cellsTop - 2 : Infinity);
-  const left = (b.left + b.width / 2) - wr.left - petW / 2;
-  const top = bottom - wr.top - petH;
-  pet.place({ left, top: Math.max(0, top), width: petW, height: petH });
 }
 /** 牠走完一手(runAiTurn):翻 / 吃 / 走位各自的反應 */
 function petAfterAiAction(action) {
@@ -262,7 +523,7 @@ function bootstrap() {
   syncControls();
   render({ fullBoard: true });
   bindFitPlay();   // ⛶ fit-play(v9):要在第一次 render 之後接,棋盤格子都在了才量得到投影框
-  initPet();       // 🐾 動物對手(0928):橋接好了就坐下;沒橋接(舊瀏覽器)= 沒動物,棋照下
+  init3d();        // 🧊 v12 真 3D:模組好了就建;建不起來 = 平面棋盤同局繼續(動物在 3D 建好後才坐下)
   updateInstallHint();
   registerServiceWorker();
   /* 🔗 ?daily 深連結(0906,信友火花「今日挑戰」卡直達):等於代按「📅 每日同副牌」(daily.js 在 app.js 之前載,window.BanqiDaily 已在)。 */
@@ -437,8 +698,25 @@ function bindEvents() {
   elements.difficultySelect.addEventListener("change", () => {
     state.difficulty = elements.difficultySelect.value;
     saveSettings();
+    /* 換難度:還在飛的搜尋是舊檔位算的 ⇒ 作廢;正好輪到 AI 就用新檔位重算(輪次不變、不另起局) */
+    const wasThinking = state.aiThinking;
+    invalidateSearch();
+    if (wasThinking && !state.winner && state.turnSide === state.aiSide) requestAiTurn();
     renderStatus();
     seatPet();   // 🐾 換難度就換動物(這局的 AI 也是馬上換檔)
+  });
+
+  elements.retryAiButton?.addEventListener("click", retryAi);
+
+  /* ⌨ 無障礙操作層:焦點在哪一格,3D 盤上就畫白框(看不見的按鈕也要讓明眼的鍵盤使用者知道自己在哪) */
+  elements.board.addEventListener("focusin", (event) => {
+    const index = getCellIndexFromEventTarget(event.target);
+    keyboardFocusIndex = index;
+    if (renderer3d) renderer3d.setMarks(marksFor());
+  });
+  elements.board.addEventListener("focusout", () => {
+    keyboardFocusIndex = null;
+    if (renderer3d) renderer3d.setMarks(marksFor());
   });
 
   elements.perspectiveButton.addEventListener("click", () => {
@@ -536,9 +814,12 @@ function renderBoardView() {
   elements.boardStage.dataset.dragging = String(dragState.active && dragState.moved);
   elements.board.style.setProperty("--board-tilt", `${state.view.tilt}deg`);
   elements.board.style.setProperty("--board-spin", `${normalizeAngle(state.view.spin)}deg`);
-  elements.boardHelp.textContent = state.perspective === "angled"
-    ? "拖曳棋盤可 360 度旋轉，垂直拖曳可調整俯角。"
-    : "切回 360° 視角後，就能拖曳旋轉棋盤。";
+  elements.boardHelp.textContent = renderer3d
+    ? "拖曳棋盤可旋轉視角；點一下暗子翻面。"
+    : state.perspective === "angled"
+      ? "拖曳棋盤可 360 度旋轉，垂直拖曳可調整俯角。"
+      : "切回 360° 視角後，就能拖曳旋轉棋盤。";
+  if (renderer3d) return;   // 🧊 3D 模式下 DOM 棋盤是無障礙層,不用量它
   fitBoard();
   setTimeout(fitBoard, 360);   // .board 的 transform 有 320ms transition,量太早會拿到過渡中的投影框
   setTimeout(fitBoard, 800);   // 進真全螢幕時瀏覽器還會再重排一輪(3d-chess-co 0914 實測 600ms 才穩)
@@ -557,14 +838,14 @@ function fitBoard() {
   const board = elements.board;
   const stage = elements.boardStage;
   if (!wrap || !board || !stage) return;
-  if (!fitPlayActive()) {
+  if (!fitPlayActive() || renderer3d) {   // 🧊 3D 模式:畫布自己 fit(Board3D + ResizeObserver),不量 DOM 投影框
     board.style.removeProperty("--fit-board-w");
     stage.style.removeProperty("--fit-shift-x");
     stage.style.removeProperty("--fit-shift-y");
     return;
   }
   const PAD = 6;
-  const reserve = petReserve();   // 🐾 動物小窗的位子從頂端留出來(放不下 = 0,跟以前完全一樣)
+  const reserve = 0;   // v12:動物搬進 3D scene,平面退路沒有動物 ⇒ 不再留小窗的位子
   const wrapR = wrap.getBoundingClientRect();
   const availW = wrap.clientWidth - PAD * 2;
   const availH = wrap.clientHeight - PAD * 2 - reserve;
@@ -719,6 +1000,12 @@ function getCellIndexFromEventTarget(target) {
 }
 
 function startNewGame(message, options = {}) {
+  /* 🧊 新局:舊動畫、舊計時器、舊搜尋全部作廢(gameGen / search.gen 一比就知道),新局直接擺 32 枚背面,不補播上一局的任何東西 */
+  gameGen += 1;
+  invalidateSearch();
+  idleQueue = [];
+  animBusy = false;
+  if (elements.retryAiButton) elements.retryAiButton.hidden = true;
   const settings = loadSettings();
   state = createInitialState({
     ...settings,
@@ -788,7 +1075,10 @@ function scoreDailyIfWon() {
 }
 
 function handleCellClick(index) {
-  if (state.winner || state.aiThinking || !isLocalActorTurn()) {
+  if (state.winner || state.aiThinking || animBusy || !isLocalActorTurn()) {
+    return;
+  }
+  if (!Number.isInteger(index) || index < 0 || index >= BOARD_SIZE) {
     return;
   }
 
@@ -840,7 +1130,7 @@ function performAction(action, actor) {
   state.turnCount += 1;
   if (actor === "human" && action.type === "capture" && pet) pet.react("gasp", "wow");   // 🐾 你吃了牠的子:「哇」
   finalizeAfterAction(actor);
-  render();
+  present(action, { deferStatus: action.type === "flip" });   // 🧊 規則已提交 ⇒ 鎖盤播動畫(翻面的文字等過中點才講)
 }
 
 
@@ -861,21 +1151,20 @@ function finalizeAfterAction() {
 
   if (state.mode === "ai" && state.aiSide && state.turnSide === state.aiSide) {
     state.aiThinking = true;
-    renderStatus();
+    if (!renderer3d) renderStatus();   // 🧊 3D:由 present() 統一重畫(翻面要等過中點才能講出翻到什麼)
     if (pet) pet.think();   // 🐾 手托腮想棋(人聲每三手一次)
-    window.setTimeout(runAiTurn, 220);
+    requestAiTurn();        // 🧠 v12:搜尋丟 Worker;算好 + 動畫播完 + 至少 220ms 才下
   } else {
     state.aiThinking = false;
   }
 }
 
 
-function runAiTurn() {
+function runAiTurn(action) {
   if (!state.aiThinking || state.winner || state.mode !== "ai" || state.turnSide !== state.aiSide) {
     return;
   }
 
-  const action = chooseAiAction(state);
   if (!action) {
     state.aiThinking = false;
     const winner = state.humanSide || "red";
@@ -892,7 +1181,7 @@ function runAiTurn() {
   state.aiThinking = false;
   petAfterAiAction(action);   // 🐾 翻 / 吃 / 走位的反應(要在 finalize 之前:結束那一手由 petEndGame 蓋過去)
   finalizeAfterAction();
-  render();
+  present(action, { deferStatus: action.type === "flip" });
 }
 
 
@@ -914,7 +1203,11 @@ function render(options = {}) {
   renderStatus();
   renderCaptureSummary();
   renderPoolSummary();
-  syncPet();   // 🐾 等你 / 鈕 / 小窗位子
+  syncPet();   // 🐾 等你 / 鈕 / body.pet-on
+  if (renderer3d) {
+    if (fullBoard && !animBusy) renderer3d.reset(publicCells());   // 新局 / 測試擺殘局:瞬間對齊,不播動畫
+    renderer3d.setMarks(marksFor());
+  }
 }
 
 function renderBoard(forceFull = false) {
@@ -1112,27 +1405,32 @@ function showHint() {
     renderStatus();
     return;
   }
+  if (state.hintBusy || animBusy) {
+    return;                                   // 正在算 / 正在播動畫:不重送
+  }
 
-  let action = null;
-  try {
-    const probe = cloneState(state);
-    probe.aiSide = state.turnSide;            // 讓搜尋站在「現在該走的這一邊」
-    probe.hintLevel = HINT_LEVEL;             // 最深 + 零隨機
-    action = chooseHintAction(probe);         // ★ 不是 chooseAiAction:提示多兩道「別做白工交換」的關卡
-  } catch (error) {
-    console.error("[hint] chooseHintAction threw:", error);
+  /* 🧠 v12:同一支 chooseHintAction(最深 + 零隨機 + 兩道「別做白工交換」關卡)搬到 Worker 算,主執行緒照樣能轉視角。
+     回來時局面已經變了(玩家先走了 / 重開局)⇒ finishSearch 自己丟掉,不會把紫框標在錯的格子上。提示只顯示建議,絕不代走。 */
+  state.hintBusy = true;
+  if (elements.hintButton) { elements.hintButton.disabled = true; elements.hintButton.setAttribute("aria-busy", "true"); }
+  const done = () => {
+    state.hintBusy = false;
+    if (elements.hintButton) { elements.hintButton.disabled = false; elements.hintButton.removeAttribute("aria-busy"); }
+  };
+  const asked = { turnCount: state.turnCount, side: state.turnSide };
+  requestSearch("hint", (action) => {
+    if (!action) {
+      setHintMessage("💡 找不到可走的棋了。");
+      return;
+    }
+    state.hint = { turnCount: asked.turnCount, side: asked.side, action };
+    renderBoard(true);
+    renderStatus();
+    if (renderer3d) renderer3d.setMarks(marksFor());
+  }, (why) => {
+    console.warn("[hint] 搜尋失敗:", why);
     setHintMessage("💡 這一手算不出來,先自己走走看。");
-    return;
-  }
-
-  if (!action) {
-    setHintMessage("💡 找不到可走的棋了。");
-    return;
-  }
-
-  state.hint = { turnCount: state.turnCount, side: state.turnSide, action };
-  renderBoard(true);
-  renderStatus();
+  }, done);
 }
 
 /* 提示文字寫進 statusMessage,並且**下一次 renderStatus 就會被蓋掉** ——
@@ -1397,7 +1695,7 @@ function updateInstallHint() {
 }
 
 function isBoardInteractionLocked() {
-  return !isLocalActorTurn() || state.aiThinking || Boolean(state.winner);
+  return !isLocalActorTurn() || state.aiThinking || animBusy || Boolean(state.winner);
 }
 
 function shallowEqual(left, right) {

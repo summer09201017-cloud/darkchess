@@ -3,12 +3,14 @@
 //    Cloudflare Pages 把 /index.html 308 轉到 / ⇒ 名單裡有 "./index.html" 的話 install 存到的是 redirected:true 的回應,
 //    導覽拿到它瀏覽器直接拒收 ⇒ 裝成 App 開就 ERR_FAILED;每次 bump SW 重踩。⇒ 名單與離線退路只認 "./",永遠不要再把 index.html 加回來。
 //    同時 addAll(全部或全無)改成逐一 add + catch:一個檔抓不到不再整批沒快取。
-const CACHE_NAME = "cloud-banqi-v13";
+const CACHE_NAME = "cloud-banqi-v14";
 const APP_ASSETS = [
   "./",
   "./styles.css",
   "./app.js",
   "./daily.js",
+  "./banqi-core.js",
+  "./ai-worker.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
@@ -18,7 +20,13 @@ const APP_ASSETS = [
   "./js/voice.js",
   "./js/opponent.js",
   "./js/voicePhrases.js",
-  "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js",
+  "./js/three-full.js",
+  "./js/board3d.js",
+  "./js/pieces3d.js",
+  "./js/view-kit.js",
+  "./js/scene3d.js",
+  /* v12(sw v14):three r128 改放同源 vendor/,離線照樣開得起 3D(以前是 CDN,首次離線必失敗) */
+  "./vendor/three.r128.min.js",
   /* voice:begin(scripts/gen-voice.mjs 照目錄重生,不手抄) */
   "./voice/manifest.json",
   "./voice/bear-capture.mp3",

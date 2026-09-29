@@ -77,11 +77,12 @@ ok(await page.locator("#hintButton").count() === 1, "有「💡 提示」鈕");
 // 等到輪回玩家(上面翻完一子後 AI 會走一手)
 await page.waitForFunction(() => {
   const B = window.__banqi;
-  return !B.state.aiThinking && !B.state.winner
+  return !B.state.aiThinking && !B.state.winner && !B.animBusy
     && (B.state.humanSide === null || B.state.turnSide === B.state.humanSide);
-}, null, { timeout: 8000 }).catch(() => {});
+}, null, { timeout: 15000 }).catch(() => {});
 await page.click("#hintButton");
-await page.waitForTimeout(600);
+/* v12:提示搜尋搬進 Worker ⇒ 非同步;等「算完」(有建議、鈕解除忙碌),不是等固定毫秒(無頭機慢時固定等待是假紅溫床) */
+await page.waitForFunction(() => { const B = window.__banqi; return B.state.hint && !B.state.hintBusy; }, null, { timeout: 15000 }).catch(() => {});
 const hintA = await page.evaluate(() => {
   const B = window.__banqi;
   const h = B.state.hint;
@@ -375,51 +376,77 @@ await page.selectOption("#difficultySelect", "standard");
 await page.click('#petControls [data-pet="voice"]');
 await page.waitForFunction(() => window.__banqi.pet && window.__banqi.pet.kind === "cat" && window.__banqi.pet.visible, null, { timeout: 5000 });
 await page.waitForTimeout(700);
+/* 🐾 v12:牠跟棋盤在**同一個** three scene(舊 v11 的透明小窗 #petWindow 拿掉了)。
+   舊斷言「小窗在卡片裡 / 小窗不蓋格子」換成同 scene 的等價斷言:整頁只有一張 WebGL 畫布、牠的 group 掛在棋盤 scene、
+   坐在相機對面(換邊後跟著換)、凳子落地、頭框在畫布裡、頭在所有格心的上方(不擋格)、遠端那排格心的畫面點仍是畫布、
+   開動物後盤寬 ≥ 關閉時 75%。理由:小窗不存在了,量它等於量空氣(規格 §5「旧小窗位置断言替换」)。 */
 const petProbe = () => page.evaluate(() => {
-  const P = window.__banqi.pet, f = P.figure;
+  const B = window.__banqi, P = B.pet, R3 = B.renderer, f = P.figure;
   let neck = 0, eyes = 0, ears = 0, brows = 0, mouth = 0;
   if (f) f.group.traverse((o) => { if (o.userData.neck) neck++; if (o.userData.eye) eyes++; if (o.userData.ear) ears++; if (o.userData.brow) brows++; if (o.userData.mouth) mouth++; });
+  document.querySelector("#board3d").scrollIntoView({ block: "center" });
   const pr = P.probe();
-  const wrap = document.querySelector(".board-card").getBoundingClientRect();
-  const cells = [...document.querySelectorAll("#board .cell")].map((c) => c.getBoundingClientRect()).filter((r) => r.width > 0);
-  const w = pr.win;
-  const overlapCells = pr.visible ? cells.filter((r) => !(r.right < w.l || r.left > w.r || r.bottom < w.t || r.top > w.b)).length : 0;
-  const farCell = [...document.querySelectorAll("#board .cell")].reduce((a, c) => (c.getBoundingClientRect().top < a.getBoundingClientRect().top ? c : a));
-  farCell.scrollIntoView({ block: "center" });   // elementFromPoint 吃視口座標:棋盤在頁面下半、沒捲進來會回 null(假紅)
-  const far = farCell.getBoundingClientRect();
-  const hit = document.elementFromPoint(far.left + far.width / 2, far.top + far.height / 2);
-  window.scrollTo(0, 0);
-  return { ...pr, neck, eyes, ears, brows, mouth, capsule: !!window.THREE.CapsuleGeometry,
-    inCard: w.l >= wrap.left - 1 && w.r <= wrap.right + 1 && w.t >= wrap.top - 1,
-    overlapCells, farHitIsCell: !!(hit && hit.closest && hit.closest(".cell")),
-    side: document.querySelector("#statusSide").textContent, tag: document.querySelector("#petTag").textContent, pressed: document.querySelector('#petControls [aria-pressed="true"]')?.dataset.pet,
+  const cv = document.querySelector("#board3dCanvas").getBoundingClientRect();
+  const cellYs = [...Array(32).keys()].map((i) => R3.cellToScreen(i).y);
+  const far2 = R3.cellToScreen(1);
+  const hit = document.elementFromPoint(far2.x, far2.y);
+  const hb = pr.headBox || { l: 0, t: 0, r: 0, b: 0 };
+  const out = { ...pr, neck, eyes, ears, brows, mouth, capsule: !!window.THREE.CapsuleGeometry,
+    canvases: document.querySelectorAll("canvas").length, sameScene: !!(f && R3.board.scene.children.includes(f.group)), petWindow: !!document.querySelector("#petWindow"),
+    headInCanvas: pr.figure ? (hb.l >= cv.left - 1 && hb.r <= cv.right + 1 && hb.t >= cv.top - 4 && hb.b <= cv.bottom + 1) : false,
+    headAboveCells: pr.figure ? hb.b <= Math.min(...cellYs) : false,
+    farHitIsCanvas: !!(hit && hit.id === "board3dCanvas"), yaw: R3.board.yaw,
+    side: document.querySelector("#statusSide").textContent, pressed: document.querySelector('#petControls [aria-pressed="true"]')?.dataset.pet,
     fitPlay: document.body.classList.contains("fit-play"), petOn: document.body.classList.contains("pet-on") };
+  window.scrollTo(0, 0);
+  return out;
 });
 const pet0 = await petProbe();
-ok(pet0.figure && pet0.visible && pet0.kind === "cat" && pet0.groupVisible, `🐾 標準檔 ⇒ 🐱 橘貓坐在棋盤對面(小窗 ${pet0.win.w}×${pet0.win.h} @ ${pet0.win.l},${pet0.win.t};相機距 ${pet0.dist})`);
+ok(pet0.figure && pet0.visible && pet0.kind === "cat" && pet0.groupVisible, `🐾 標準檔 ⇒ 🐱 橘貓坐在棋盤對面(scale ${pet0.scale}、R ${pet0.R})`);
+ok(pet0.canvases === 1 && pet0.sameScene && !pet0.petWindow, `🐾 同一個 scene:整頁只有 ${pet0.canvases} 張畫布、牠掛在棋盤 scene、沒有舊小窗`);
 ok(pet0.capsule, "🐾 three-shim 補上了 r128 沒有的 CapsuleGeometry");
 ok(pet0.neck === 1 && pet0.eyes === 2 && pet0.ears === 2 && pet0.brows === 2 && pet0.mouth === 1, "🐾 人物鐵則遍歷:脖子 1、眼 2、耳 2、眉 2、嘴 1");
-ok(pet0.head.inside, `🐾 桌機:頭頂在小窗裡(NDC ${pet0.head.x}, ${pet0.head.y})`);
-ok(pet0.inCard, `🐾 小窗整個在棋盤卡片裡(卡片 overflow:hidden,出界就被切)`);
-ok(pet0.overlapCells === 0 && pet0.farHitIsCell, `🐾 小窗不蓋任何一格(壓到 ${pet0.overlapCells} 格)、遠端那排照樣點得到`);
-ok(pet0.pressed === "voice" && pet0.petOn && /🐱/.test(pet0.tag), `🐾 三段鈕亮「會說話」、body.pet-on、小窗名牌帶臉(${pet0.tag};開局還沒定邊 ⇒ 狀態行先寫「${pet0.side}」)`);
+ok(pet0.head.inside && pet0.ear.inside && pet0.headInCanvas, `🐾 桌機:頭頂與耳尖都在畫面裡、頭框在畫布內(頭 NDC ${pet0.head.y}、耳尖 ${pet0.ear.y})`);
+ok(pet0.pos.z < 0 && Math.abs(pet0.stoolY - pet0.floorY) < 0.02, `🐾 坐在相機對面(z ${pet0.pos.z})、凳子落地(${pet0.stoolY} vs 地板 ${pet0.floorY})`);
+ok(pet0.headAboveCells && pet0.farHitIsCanvas, `🐾 頭在所有格心上方(不擋格)、遠端那排的畫面點仍是棋盤畫布`);
+ok(pet0.pressed === "voice" && pet0.petOn, `🐾 三段鈕亮「會說話」、body.pet-on(開局還沒定邊 ⇒ 狀態行先寫「${pet0.side}」)`);
+/* 開動物後盤寬 ≥ 關閉時 75% */
+const widthWith = await page.evaluate(() => window.__banqi.renderer.boardScreenBox().w);
+await page.click('#petControls [data-pet="off"]');
+await page.waitForTimeout(200);
+const widthWithout = await page.evaluate(() => window.__banqi.renderer.boardScreenBox().w);
+await page.click('#petControls [data-pet="voice"]');
+await page.waitForTimeout(200);
+ok(widthWith >= widthWithout * 0.75, `🐾 開動物後盤寬 ${Math.round(widthWith)} ≥ 關閉時 ${Math.round(widthWithout)} 的 75%`);
+/* 換邊:牠跟著坐到新的對面 */
+await page.locator("#board3d").scrollIntoViewIfNeeded();
+await page.click("#viewButton");
+await page.click("[data-vk-flip]");
+await page.waitForTimeout(300);
+const petFlip = await petProbe();
+ok(petFlip.pos.z > 0 && Math.abs(petFlip.yaw - 180) < 1, `🐾 🔃 換邊 ⇒ 牠也換到新的對面(yaw ${petFlip.yaw}、z ${petFlip.pos.z})`);
+await page.locator("#board3d").scrollIntoViewIfNeeded();
+await page.click("[data-vk-reset]");
+await page.click("#viewButton");
 await page.setViewportSize({ width: 390, height: 844 });
 await page.waitForTimeout(700);
 const petPort = await petProbe();
-ok(petPort.visible && petPort.head.inside && petPort.overlapCells === 0 && petPort.inCard, `🐾 手機直向:也放得下(小窗 ${petPort.win.w}×${petPort.win.h};頭 ${petPort.head.x}, ${petPort.head.y};壓到 ${petPort.overlapCells} 格)`);
+ok(petPort.visible && petPort.head.inside && petPort.ear.inside && petPort.headInCanvas && petPort.headAboveCells, `🐾 手機直向:整顆頭 + 耳尖在畫布裡、不擋格(頭 ${petPort.head.y}、耳尖 ${petPort.ear.y})`);
 await page.setViewportSize({ width: 844, height: 390 });
 await page.waitForTimeout(900);
 const petLand = await petProbe();
-ok(petLand.fitPlay && !petLand.visible && petLand.hidden, "🐾 手機橫向 fit-play 卡片太矮(<480)⇒ 小窗藏起來、棋盤不為牠縮(接受:看牠請轉直向)");
+ok(petLand.fitPlay && !petLand.visible && petLand.suppressed && !petLand.groupVisible, "🐾 手機橫向 fit-play 畫面太矮(<480)⇒ 牠藏起來、棋盤不為牠縮(接受:看牠請轉直向)");
 await page.setViewportSize({ width: 1100, height: 820 });
 await page.waitForTimeout(700);
-ok((await petProbe()).visible, "🐾 轉回桌機 ⇒ 小窗回來");
-/* 真點一顆暗子(翻子定邊)⇒ 牠開算(think)⇒ 牠回手(翻 hop/shrug 或 走 place 或 吃 hop) */
-await page.locator("#board .cell").nth(5).click();
-await page.waitForFunction(() => { const B = window.__banqi, s = B.state; return s.humanSide && s.turnSide === s.humanSide && !s.aiThinking && B.pet.figs.log.length >= 2; }, null, { timeout: 20000 });
+ok((await petProbe()).visible, "🐾 轉回桌機 ⇒ 牠回來");
+/* 真座標點一顆暗子(翻子定邊)⇒ 牠開算(think)⇒ 牠回手(翻 hop/shrug 或 走 place 或 吃 hop) */
+await page.locator("#board3d").scrollIntoViewIfNeeded();
+const tap5 = await page.evaluate(() => window.__banqi.renderer.pieceTopToScreen(5));
+await page.mouse.click(tap5.x, tap5.y);
+await page.waitForFunction(() => { const B = window.__banqi, s = B.state; return s.humanSide && s.turnSide === s.humanSide && !s.aiThinking && !B.animBusy && B.pet.figs.log.length >= 2; }, null, { timeout: 20000 });
 await page.waitForTimeout(200);
-const moved = await page.evaluate(() => ({ log: window.__banqi.pet.figs.log.map((e) => e.kind), turn: window.__banqi.state.turnSide, human: window.__banqi.state.humanSide, last: window.__banqi.state.lastAction && window.__banqi.state.lastAction.type }));
-ok(moved.log.includes("think") && moved.log.some((k) => ["hop", "shrug", "place"].includes(k)), `🐾 事件真的接到(figs.log):${moved.log.join(",")}(牠上一手 ${moved.last})`);
+const moved = await page.evaluate(() => ({ log: window.__banqi.pet.figs.log.map((e) => e.kind), last: window.__banqi.state.lastAction && window.__banqi.state.lastAction.type, first: window.__banqi.state.pieces.find((p) => p.position === 5)?.revealed }));
+ok(moved.first && moved.log.includes("think") && moved.log.some((k) => ["hop", "shrug", "place"].includes(k)), `🐾 真座標點 idx 5 翻開了,事件真的接到(figs.log):${moved.log.join(",")}(牠上一手 ${moved.last})`);
 const sideAfter = await page.evaluate(() => document.querySelector("#statusSide").textContent);
 ok(/🐱 橘貓\(AI\)執/.test(sideAfter), `🐾 定邊後狀態行寫「對手是誰」(${sideAfter})`);
 const pose = await page.evaluate(() => {
@@ -445,17 +472,17 @@ ok(pose.think.armR < -1.9 && pose.think.tilt < -0.05, `🐾 think:手托腮、�
 ok(pose.said.join(" ") === "cat:win cat:lose", `🗣 同一個入口也叫了人聲:${pose.said.join(" ")}`);
 await page.click('#petControls [data-pet="off"]');
 await page.waitForTimeout(150);
-const off = await page.evaluate(() => ({ hidden: document.querySelector("#petWindow").hidden, saved: localStorage.getItem("banqi-pet"), on: window.__banqi.pet.on, side: document.querySelector("#statusSide").textContent }));
-ok(off.hidden && off.saved === "off" && !off.on && !/🐱/.test(off.side), `🐾 關掉 ⇒ 小窗藏起來、localStorage 記 off、狀態不帶臉(${JSON.stringify(off)})`);
+const off = await page.evaluate(() => ({ groupVisible: window.__banqi.pet.figure.group.visible, saved: localStorage.getItem("banqi-pet"), on: window.__banqi.pet.on, side: document.querySelector("#statusSide").textContent }));
+ok(off.groupVisible === false && off.saved === "off" && !off.on && !/🐱/.test(off.side), `🐾 關掉 ⇒ 牠藏起來(visible 嚴格 false)、localStorage 記 off、狀態不帶臉(${JSON.stringify(off)})`);
 await page.click('#petControls [data-pet="mute"]');
 await page.waitForTimeout(150);
-const mute = await page.evaluate(() => ({ hidden: document.querySelector("#petWindow").hidden, voiceOn: window.__banqi.pet.voiceOn, visible: window.__banqi.pet.visible }));
-ok(!mute.hidden && mute.visible && mute.voiceOn === false, `🐾 不出聲 ⇒ 還坐著、不唸(${JSON.stringify(mute)})`);
+const mute = await page.evaluate(() => ({ groupVisible: window.__banqi.pet.figure.group.visible, voiceOn: window.__banqi.pet.voiceOn, visible: window.__banqi.pet.visible }));
+ok(mute.groupVisible === true && mute.visible && mute.voiceOn === false, `🐾 不出聲 ⇒ 還坐著、不唸(${JSON.stringify(mute)})`);
 await page.click('#petControls [data-pet="voice"]');
 await page.selectOption("#modeSelect", "local");
 await page.waitForTimeout(300);
-const local = await page.evaluate(() => ({ kind: window.__banqi.pet.kind, hidden: document.querySelector("#petWindow").hidden, petOn: document.body.classList.contains("pet-on") }));
-ok(local.kind === null && local.hidden && !local.petOn, "🐾 雙人同機 ⇒ 沒有動物、小窗藏起來");
+const local = await page.evaluate(() => ({ kind: window.__banqi.pet.kind, figure: !!window.__banqi.pet.figure, petOn: document.body.classList.contains("pet-on") }));
+ok(local.kind === null && !local.figure && !local.petOn, "🐾 雙人同機 ⇒ 沒有動物");
 await page.selectOption("#modeSelect", "ai");
 await page.waitForFunction(() => window.__banqi.pet.kind === "cat", null, { timeout: 5000 });
 await page.waitForFunction(() => window.__banqi.pet.voice.ready(), null, { timeout: 10000 }).catch(() => {});
@@ -465,7 +492,7 @@ await page.click("#dailyButton");
 await page.waitForFunction(() => window.__banqi.pet.kind === "owl", null, { timeout: 5000 });
 await page.waitForTimeout(400);
 const owl = await petProbe();
-ok(owl.kind === "owl" && owl.visible && owl.head.inside && /🦉/.test(owl.tag), `🐾 每日同副牌 ⇒ 🦉 貓頭鷹陪你(${owl.tag})`);
+ok(owl.kind === "owl" && owl.visible && owl.head.inside, `🐾 每日同副牌 ⇒ 🦉 貓頭鷹陪你`);
 
 ok(errors.length === 0, "整場零 pageerror", errors.join(" | ").slice(0, 200));
 

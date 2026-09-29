@@ -69,7 +69,7 @@ body.immersive .board{width:min(96vw,32.5rem)} body.immersive .layout{width:100%
             <select id="difficultySelect"></select>
           </label>
 
-          <div class="field field--buttons">
+          <div class="field field--buttons field--legacy-view">
             <span>棋盤視角</span>
             <div class="view-controls">
               <button class="button button--ghost" id="perspectiveButton" type="button" aria-pressed="true">360° 視角</button>
@@ -100,6 +100,8 @@ body.immersive .board{width:min(96vw,32.5rem)} body.immersive .layout{width:100%
               title="收起棋盤旁的面板,棋盤拿到更多空間">▼ 收起選單</button>
             <!-- ☰ 選單(v9):只在 fit-play(沉浸 / 手機橫向)出現——那個版面把模式/AI 強度/視角那張卡藏起來了,這顆把它叫回來 -->
             <button class="button button--ghost menu-fold-button play-only" id="playMenuButton" type="button" aria-expanded="false">☰ 選單</button>
+            <!-- 🧠 v12:AI 搜尋在 Worker 裡逾時 / 出錯才出現;輪次保留,按了重新請 AI 走這一手 -->
+            <button class="button" id="retryAiButton" type="button" hidden>重試 AI</button>
           </div>
           <p class="status-card__headline" id="dailyLine" hidden style="font-weight:700"></p>
           <p class="status-card__headline" id="statusMessage">先翻子定邊，再開始攻防。</p>
@@ -115,22 +117,27 @@ body.immersive .board{width:min(96vw,32.5rem)} body.immersive .layout{width:100%
         </section>
 
         <section class="board-card card">
-          <!-- 🐾 動物對手的透明小窗:app.js petLayout() 量棋盤投影框後貼在遠端那條邊上方;pointer-events:none,不擋任何點擊 -->
-          <div class="pet-window" id="petWindow" hidden aria-hidden="true">
-            <canvas id="petCanvas" width="120" height="150"></canvas>
-            <div class="pet-window__tag" id="petTag"></div>
+          <!-- 🧊 v12 真 3D:棋盤、32 枚棋子、動物對手都在這一張 WebGL 畫布裡(js/scene3d.js)。
+               下面的 #board 是同一份 state 生成的 32 格按鈕:3D 模式下看不見、不攔滑鼠,只給鍵盤 / 讀屏;3D 開不起來時它就是平面棋盤。 -->
+          <div class="board3d" id="board3d">
+            <canvas id="board3dCanvas" aria-hidden="true"></canvas>
+            <button class="button button--ghost view-toggle" id="viewButton" type="button" aria-expanded="false" aria-controls="viewPanel">🎥 視角</button>
+            <div class="view-panel" id="viewPanel" hidden>
+              <button class="button button--ghost view-panel__close" type="button" data-close aria-label="關閉視角面板">✕</button>
+            </div>
           </div>
+          <p class="render-notice" id="renderNotice" hidden role="status"></p>
           <div class="board-stage" id="boardStage">
             <div class="board-stage__halo"></div>
             <div class="board-stage__platform"></div>
             <div class="board" id="board" role="grid" aria-label="暗棋棋盤"></div>
           </div>
-          <p class="board-help" id="boardHelp">拖曳棋盤可 360 度旋轉，垂直拖曳可調整俯角。</p>
+          <p class="board-help" id="boardHelp">拖曳棋盤可旋轉視角；點一下暗子翻面。</p>
         </section>
 
         <section class="tips card">
           <h2>操作方式</h2>
-          <p>點一下暗子翻面。點自己的明子後，再點發光格移動或吃子。開啟 360° 視角後，可直接拖曳棋盤旋轉。炮平常只能移動一格，但吃子時必須隔著剛好一枚棋子跳吃。</p>
+          <p>點一下暗子翻面。點自己的明子後，再點綠色「走」或紅色「吃」的格子。拖曳棋盤可旋轉視角，「🎥 視角」可選斜俯視、正俯視、對局視角，兩人同機可按「🔃 換邊」。鍵盤可用 Tab 移到棋格、Enter 翻子走子。炮平常只能移動一格，但吃子時必須隔著剛好一枚棋子跳吃。</p>
         </section>
       </section>
 
@@ -194,17 +201,29 @@ body.immersive .board{width:min(96vw,32.5rem)} body.immersive .layout{width:100%
        three r128 從 CDN 載(跟 3D-Xiangqi 同一個網址,sw.js 也快取);引擎 js/animals.js 是 ES module、import 'three'
        ⇒ import map 把 'three' 指到 js/three-shim.js(全域 THREE → 具名匯出 + 補 CapsuleGeometry)。
        ⚠ import map 一定要在第一個 <script type="module">(下面 PetKit 那段)之前。 -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- 🧊 v12:three r128 改放同源 vendor/(sw.js 預快取),離線照樣開得起 3D;版本不動(r128),動物引擎 / 棋盤共用這一個全域 THREE -->
+  <script src="vendor/three.r128.min.js"></script>
   <script type="importmap">{ "imports": { "three": "./js/three-shim.js" } }</script>
   <script src="banqi-core.js"></script>
   <script src="daily.js"></script>
   <script src="app.js"></script>
   <!-- 🐾 模組橋接:app.js 是傳統 script ⇒ 掛到 window.PetKit 再發事件(app.js initPet() 兩種時序都接得住)。載不進來 = 沒動物,棋照下。 -->
   <script type="module">
-    import { Opponent, animalFor, PET_MODES, ANIMALS } from './js/opponent.js';
+    import { animalFor, PET_MODES, ANIMALS } from './js/opponent.js';
     import { createVoice } from './js/voice.js';
-    window.PetKit = { Opponent, animalFor, PET_MODES, ANIMALS, createVoice };
+    window.PetKit = { animalFor, PET_MODES, ANIMALS, createVoice };
     window.dispatchEvent(new Event('pet-kit-ready'));
+  </script>
+  <!-- 🧊 v12 真 3D 橋接:scene3d.js(棋盤 + 棋子 + 視角面板 + 動物)掛到 window.Banqi3D 再發事件;載不進來 / WebGL 不行 ⇒ app.js 切平面棋盤,同局繼續 -->
+  <script type="module">
+    try {
+      const { createScene3D } = await import('./js/scene3d.js');
+      window.Banqi3D = { create: createScene3D };
+      window.dispatchEvent(new Event('banqi3d-ready'));
+    } catch (error) {
+      console.warn('🧊 3D 模組載不進來', error);
+      window.dispatchEvent(new Event('banqi3d-failed'));
+    }
   </script>
 <!-- mfs-portrait-zoom v1 -->
 <button type="button" id="mfsExit" aria-label="離開全螢幕">✕ 離開全螢幕</button>
