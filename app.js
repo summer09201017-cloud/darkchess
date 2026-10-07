@@ -1739,9 +1739,39 @@ function registerServiceWorker() {
     return;
   }
 
+  /* ★ v17(1007):已安裝的 App 要能自己換到新版(使用者回報「已安裝的手機版暗棋無法更新到最新版」)。
+     ① updateViaCache:'none' —— 檢查 sw.js 時不吃瀏覽器 HTTP 快取
+     ② App 切回前景(visibilitychange)就 reg.update():Android 常把 App 留在背景,切回來不算重開、不會自己檢查
+     ③ 新版 SW 接手(controllerchange):還沒開始下(turnCount 0、沒在播動畫)⇒ 直接重新整理;
+        下到一半 ⇒ 不打斷棋局,狀態卡出現「🔄 有新版,按這裡更新」。第一次安裝(本來沒有 controller)不算。 */
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  let reloading = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController || reloading) return;
+    if (state.turnCount === 0 && !animBusy) { reloading = true; location.reload(); return; }
+    showUpdateButton();
+  });
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js").catch(() => {
+    navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }).then((reg) => {
+      const check = () => { try { reg.update().catch(() => {}); } catch (error) { /* 舊瀏覽器 */ } };
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") check(); });
+      window.addEventListener("online", check);
+    }).catch(() => {
       // The game still works online without a service worker.
     });
   });
+}
+
+function showUpdateButton() {
+  if (document.getElementById("swUpdateButton")) return;
+  const row = document.querySelector(".status-card__row");
+  if (!row) return;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.id = "swUpdateButton";
+  btn.className = "button";
+  btn.textContent = "🔄 有新版,按這裡更新";
+  btn.title = "會重新整理頁面;這一局會重新開始";
+  btn.addEventListener("click", () => location.reload());
+  row.appendChild(btn);
 }

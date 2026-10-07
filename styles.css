@@ -292,6 +292,7 @@ body.has-3d .board-card { backdrop-filter: none; -webkit-backdrop-filter: none; 
 .render-notice { margin: 0.5rem 0 0; padding: 0.55rem 0.8rem; border-radius: 12px; background: rgba(216, 157, 71, 0.16); border: 1px solid rgba(216, 157, 71, 0.45); font-size: 0.9rem; }
 .render-notice[hidden] { display: none; }
 #retryAiButton { min-height: 44px; }
+#swUpdateButton { min-height: 44px; }
 #retryAiButton[hidden] { display: none; }
 .pet-controls { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.45rem; }
 .pet-controls .button { padding: 0.6rem 0.35rem; font-size: 0.82rem; line-height: 1.2; min-height: 2.75rem; }

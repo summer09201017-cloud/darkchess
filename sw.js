@@ -3,7 +3,7 @@
 //    Cloudflare Pages 把 /index.html 308 轉到 / ⇒ 名單裡有 "./index.html" 的話 install 存到的是 redirected:true 的回應,
 //    導覽拿到它瀏覽器直接拒收 ⇒ 裝成 App 開就 ERR_FAILED;每次 bump SW 重踩。⇒ 名單與離線退路只認 "./",永遠不要再把 index.html 加回來。
 //    同時 addAll(全部或全無)改成逐一 add + catch:一個檔抓不到不再整批沒快取。
-const CACHE_NAME = "cloud-banqi-v16";
+const CACHE_NAME = "cloud-banqi-v17";
 const APP_ASSETS = [
   "./",
   "./styles.css",
@@ -91,6 +91,28 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") {
+    return;
+  }
+
+  /* ★ v17(1007):網頁本體(導覽 + 同源 js/css/json/webmanifest)改「先上網、斷線才用快取」。
+     以前全部快取優先 ⇒ 已安裝的手機 App 永遠先拿到舊的 HTML/JS,新版要開第二次才換上;
+     Android 又常把 App 留在背景(從最近使用切回來不算重開)⇒ 使用者回報「已安裝的暗棋無法更新到最新版」。
+     大檔(vendor/three、voice/*.mp3、icons)仍快取優先:它們不跟版本一起變,而且省流量。 */
+  const url = new URL(event.request.url);
+  const shell = url.origin === self.location.origin && (event.request.mode === "navigate" || /\.(?:js|css|json|webmanifest)$/.test(url.pathname))
+    && !url.pathname.includes("/vendor/") && !url.pathname.includes("/voice/");
+  if (shell) {
+    event.respondWith(
+      fetch(event.request, { cache: "no-cache" })
+        .then((response) => {
+          if (response.ok && !response.redirected) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request).then((hit) => hit || (event.request.mode === "navigate" ? caches.match("./") : Response.error()))),
+    );
     return;
   }
 
