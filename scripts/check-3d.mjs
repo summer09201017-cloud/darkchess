@@ -630,6 +630,78 @@ section("⑰ 畫布不亂重設");
   await ctx.close();
 }
 
+/* ════════ ⑱ 🗺 2D 平面(v14):正交相機正上方、32 格點得到、只轉不俯仰、存檔、切回 3D 回原角度 ════════ */
+section("⑱ 2D 平面");
+{
+  const { ctx, page } = await open();
+  await page.locator("#board3d").scrollIntoViewIfNeeded();
+  const before = await page.evaluate(() => ({ pitch: +window.__banqi.renderer.board._pitchFor().toFixed(2), yaw: window.__banqi.renderer.board.yaw }));
+  await page.click("#flat2dButton");
+  const roundTrip = () => page.evaluate(() => {
+    const R = window.__banqi.renderer, bad = [];
+    for (let i = 0; i < 32; i++) { const p = R.pieceTopToScreen(i) || R.cellToScreen(i); const got = R.pick(p.x, p.y); if (got !== i) bad.push(i + "→" + got); }
+    const cv = document.querySelector("#board3dCanvas").getBoundingClientRect(), box = R.boardScreenBox();
+    const inCanvas = box.l >= cv.left - 1 && box.r <= cv.right + 1 && box.t >= cv.top - 1 && box.b <= cv.bottom + 1;
+    const offX = Math.abs((box.l + box.r) / 2 - (cv.left + cv.right) / 2), offY = Math.abs((box.t + box.b) / 2 - (cv.top + cv.bottom) / 2);
+    return { bad, inCanvas, off: Math.round(Math.max(offX, offY)), fill: +Math.max(box.w / cv.width, box.h / cv.height).toFixed(2) };
+  });
+  const on = await page.evaluate(() => {
+    const R = window.__banqi.renderer;
+    return { flat: R.flat2d, ortho: !!R.board.camera.isOrthographicCamera, txt: document.querySelector("#flat2dButton").textContent.trim(),
+      pressed: document.querySelector("#flat2dButton").getAttribute("aria-pressed"),
+      pitchOff: document.querySelector('[data-vk-range="pitch"]').disabled, presetOff: [...document.querySelectorAll("[data-vk-view]")].every((b) => b.disabled),
+      saved: JSON.parse(localStorage.getItem("cloud-banqi-3d-view-v1") || "{}").flat2d };
+  });
+  ok(on.flat && on.ortho && on.txt === "🧊 3D" && on.pressed === "true", `按「🗺 2D」⇒ 正交相機、鈕變「🧊 3D」(${JSON.stringify(on)})`);
+  ok(on.pitchOff && on.presetOff && on.saved === true, "2D 時俯角滑桿與三段預設灰掉、偏好存進 cloud-banqi-3d-view-v1");
+  let rt = await roundTrip();
+  ok(rt.bad.length === 0 && rt.inCanvas && rt.off <= 2 && rt.fill >= 0.85, `2D:32 格 投影→點擊 全對、盤整塊在畫布內且置中(偏 ${rt.off}px、填滿 ${rt.fill})`, rt.bad.join(","));
+  if (SHOTS) await page.locator("#board3d").screenshot({ path: "scripts/out/view-2d.png" });
+  // 真點:雙人同機翻一枚
+  await page.evaluate(() => { const B = window.__banqi; document.querySelector("#modeSelect").value = "local"; B.state.mode = "local"; B.startNewGame("t"); });
+  await ready(page);
+  const h0 = (await st(page)).hidden;
+  await tap(page, 5);
+  await ready(page);
+  ok((await st(page)).hidden === h0 - 1, "2D 真座標點一下暗子 ⇒ 翻開");
+  // 換邊:仍是 2D、32 格仍對
+  await page.click("#viewButton"); await page.click("[data-vk-flip]"); await page.click("#viewButton");
+  const yawF = await page.evaluate(() => window.__banqi.renderer.board.yaw);
+  rt = await roundTrip();
+  ok(Math.round(yawF) === 180 && rt.bad.length === 0 && rt.inCanvas, `2D 換邊 yaw ${yawF}、32 格仍全對`, rt.bad.join(","));
+  if (SHOTS) await page.locator("#board3d").screenshot({ path: "scripts/out/view-2d-flip.png" });
+  // 拖曳:只轉方向、不改底下的 3D 俯角
+  const cv = await page.locator("#board3dCanvas").boundingBox();
+  await page.mouse.move(cv.x + cv.width / 2, cv.y + cv.height / 2); await page.mouse.down();
+  await page.mouse.move(cv.x + cv.width / 2 + 60, cv.y + cv.height / 2 + 80, { steps: 6 }); await page.mouse.up();
+  const dr = await page.evaluate(() => ({ yaw: window.__banqi.renderer.board.yaw, pitch: +window.__banqi.renderer.board._pitchFor().toFixed(2), flat: window.__banqi.renderer.flat2d }));
+  ok(dr.flat && dr.yaw !== yawF && dr.pitch === before.pitch, `2D 拖曳只轉方向(yaw ${yawF}→${dr.yaw})、3D 俯角不動(${dr.pitch})`);
+  rt = await roundTrip();
+  ok(rt.bad.length === 0 && rt.inCanvas, `2D 斜轉(yaw ${dr.yaw})後 32 格仍全對、盤在畫布內`, rt.bad.join(","));
+  // 重新整理:記得 2D
+  await page.reload(); await page.waitForFunction(() => window.__banqi && window.__banqi.renderer, null, { timeout: 20000 });
+  ok(await page.evaluate(() => window.__banqi.renderer.flat2d && document.querySelector("#flat2dButton").textContent.trim() === "🧊 3D"), "重新整理後仍是 2D");
+  // 切回 3D:回原俯角、透視相機、控件恢復
+  await page.click("#flat2dButton");
+  const off = await page.evaluate(() => ({ flat: window.__banqi.renderer.flat2d, persp: !!window.__banqi.renderer.board.camera.isPerspectiveCamera,
+    pitch: +window.__banqi.renderer.board._pitchFor().toFixed(2), pitchOn: !document.querySelector('[data-vk-range="pitch"]').disabled }));
+  ok(!off.flat && off.persp && off.pitch === before.pitch && off.pitchOn, `按「🧊 3D」⇒ 透視相機、回原俯角 ${off.pitch}、俯角滑桿可用`);
+  await ctx.close();
+}
+{
+  const { ctx, page } = await open({ viewport: { width: 390, height: 844 }, dpr: 2, init: { fn: () => { try { localStorage.setItem("cloud-banqi-3d-view-v1", JSON.stringify({ version: 1, preset: "top", yaw: 0, pitch: null, flat2d: true })); } catch {} } } });
+  await page.locator("#board3d").scrollIntoViewIfNeeded();
+  const r = await page.evaluate(() => {
+    const R = window.__banqi.renderer, bad = [];
+    for (let i = 0; i < 32; i++) { const p = R.pieceTopToScreen(i) || R.cellToScreen(i); if (R.pick(p.x, p.y) !== i) bad.push(i); }
+    const cv = document.querySelector("#board3dCanvas").getBoundingClientRect(), box = R.boardScreenBox();
+    return { flat: R.flat2d, bad, inCanvas: box.l >= cv.left - 1 && box.r <= cv.right + 1 && box.t >= cv.top - 1 && box.b <= cv.bottom + 1, petOff: !R.pet || R.pet.suppressed === true };
+  });
+  ok(r.flat && r.bad.length === 0 && r.inCanvas && r.petOff, `手機直向 390×844:存檔的 2D 直接生效、32 格全對、盤在畫布內、動物收起(${JSON.stringify(r)})`);
+  if (SHOTS) await page.locator("#board3d").screenshot({ path: "scripts/out/view-2d-phone.png" });
+  await ctx.close();
+}
+
 ok(errors.length === 0, "整場零 pageerror", errors.join(" | ").slice(0, 400));
 await browser.close();
 console.log(`\n🔬 check-3d:${pass} 過 / ${fail} 失敗   (${ua},無頭)`);

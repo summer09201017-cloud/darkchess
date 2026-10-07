@@ -68,6 +68,7 @@ export class Board3D {
     this.view = this._loadView();
     this.yaw = 0;                       // 換邊(雙人對戰轉 180°)
     this.pitchOverride = null;          // 俯視角度滑桿(view-kit)的覆寫,度;null = 用 VIEWS[view].pitch(+直向自動拉高)
+    this.flat2d = false;                // 🗺 2D 平面(v14):正交相機、正上方往下看;3D 的 view/pitchOverride 原封保留,切回 3D 就回原角度
     this._ticks = new Set();
     this._boardGroup = null;
     this.pieceLayer = new THREE.Group();
@@ -98,6 +99,10 @@ export class Board3D {
     // fov 小一點 = 相機退遠 = 透視變形小:46 度時近端的盤緣座標會被拉成遠端的三倍大,
     // 像哈哈鏡;38 度接近真人看棋盤的感覺,盤面四角也比較不會被拉歪。
     this.camera = new THREE.PerspectiveCamera(38, 1, 0.05, 60);
+    /* 🗺 v14 2D 平面:另一台正交相機,set2D() 換手。所有人(pick / cellToScreen / 動物 / 渲染)都讀 this.camera,
+       Raycaster.setFromCamera 與 Vector3.project 對正交相機一樣成立 ⇒ 命中、標記位置不用另寫。 */
+    this.persCam = this.camera;
+    this.orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.05, 20);
     this.target = new THREE.Vector3(0, TABLE_Y, 0);
 
     const L = this.opt.light;
@@ -142,8 +147,8 @@ export class Board3D {
     this._lastSize = { w, h, dpr };
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(w, h, false);
-    this.camera.aspect = Math.max(w / Math.max(h, 1), 0.2);
-    this.camera.updateProjectionMatrix();
+    this.persCam.aspect = Math.max(w / Math.max(h, 1), 0.2);
+    this.persCam.updateProjectionMatrix();
     this.fitCamera();
     /* ★ 真的改了尺寸 ⇒ 當場補畫一幀:ResizeObserver 回呼跑在 rAF 之後、paint 之前,不補畫的話這一幀送出去的就是剛清空的黑畫布 */
     this.renderer.render(this.scene, this.camera);
@@ -214,6 +219,41 @@ export class Board3D {
   }
 
   /* ── 相機 ── */
+  /** 🗺 2D 平面開/關。開:換正交相機正上方往下看(只剩水平旋轉);關:換回透視相機、原本的 3D 角度 */
+  set2D(on) {
+    this.flat2d = on === true;
+    this.camera = this.flat2d ? this.orthoCam : this.persCam;
+    this.fitCamera();
+    this.renderer.render(this.scene, this.camera);   // 當場補一幀,不閃
+  }
+
+  /** 正交取景:相機在盤心正上方,畫面「上」= yaw 時遠離玩家的方向(跟 3D 同一個 yaw 定義,換邊 / 旋轉 / 字朝向都一致);
+   *  盤角(含盤身外緣)投到畫面兩軸,照 FIT_EDGE 留邊,置中。 */
+  _fitOrtho() {
+    const cam = this.orthoCam;
+    const y = THREE.MathUtils.degToRad(this.yaw);
+    const up = new THREE.Vector3(-Math.sin(y), 0, -Math.cos(y));
+    const right = new THREE.Vector3(Math.cos(y), 0, -Math.sin(y));
+    const hx = this.halfX + 0.05, hz = this.halfZ + 0.05;
+    let w = 0, h = 0;
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      w = Math.max(w, Math.abs(sx * hx * right.x + sz * hz * right.z));
+      h = Math.max(h, Math.abs(sx * hx * up.x + sz * hz * up.z));
+    }
+    const aspect = this.persCam.aspect || 1;
+    const halfH = Math.max(h / FIT_EDGE_Y, w / (FIT_EDGE_X * aspect));
+    cam.left = -halfH * aspect; cam.right = halfH * aspect; cam.top = halfH; cam.bottom = -halfH;
+    cam.up.copy(up);
+    cam.position.set(this.target.x, this.target.y + 4, this.target.z);   // 4 < fog 起點 7:不會被霧蓋灰
+    cam.lookAt(this.target);
+    cam.updateMatrixWorld();
+    cam.updateProjectionMatrix();
+    this.viewShiftX = 0; this.viewShiftY = 0;
+    this.camDist = 4;
+    if (typeof this.onCamera === "function") { try { this.onCamera(); } catch { /* 回呼壞掉不能弄壞相機 */ } }
+    return 4;
+  }
+
   setView(name) {
     if (!VIEWS[name]) return;
     this.view = name;
@@ -252,7 +292,7 @@ export class Board3D {
   _pitchFor() {
     if (this.pitchOverride != null) return this.pitchOverride;   // 滑桿覆寫:原樣照用(!= null 也擋掉 undefined)
     const base = VIEWS[this.view].pitch;
-    const aspect = this.camera?.aspect || 1;
+    const aspect = this.persCam?.aspect || 1;   // 2D 時 this.camera 是正交相機(沒有 aspect)
     const boost = Math.max(0, Math.min(22, (1 - aspect) * 40));
     return Math.min(88, base + boost);
   }
@@ -262,6 +302,7 @@ export class Board3D {
    *    這些點用比較鬆的邊(EXTRA_EDGE),而且**縮盤上限 FIT_EXTRA_MAX**(距離最多拉到只收盤角時的 1.28 倍)——
    *    棋盤是主角,對手只是配角:讓不下就讓牠被切一點頭,不讓棋盤變小到點不到。fitExtra 回空陣列 = 跟以前完全一樣。 */
   fitCamera() {
+    if (this.flat2d) return this._fitOrtho();
     const a = THREE.MathUtils.degToRad(this._pitchFor());
     const y = THREE.MathUtils.degToRad(this.yaw);
     const dirV = new THREE.Vector3(

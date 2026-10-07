@@ -281,7 +281,10 @@ body.has-3d .board .cell::after, body.has-3d .board .piece::before {
 /* 畫布那張卡不做背景模糊:backdrop-filter 要每幀把卡片後面(含一直在飄的光暈)重新模糊一次,60fps 的 WebGL 畫布又疊在它上面;
    卡片本身 82~92% 不透明,拿掉肉眼看不出差別,畫布卻少一道合成負擔。其他卡片照舊。 */
 body.has-3d .board-card { backdrop-filter: none; -webkit-backdrop-filter: none; }
-.view-toggle { position: absolute; left: 10px; top: 10px; z-index: 3; min-height: 44px; padding: 0.45rem 0.9rem; font-size: 0.92rem; }
+.view-tools { position: absolute; left: 10px; top: 10px; z-index: 3; display: flex; gap: 6px; }
+.view-toggle { min-height: 44px; padding: 0.45rem 0.9rem; font-size: 0.92rem; }
+.view-toggle[aria-pressed="true"] { background: rgba(216, 157, 71, 0.28); border-color: rgba(216, 157, 71, 0.7); }
+.view-kit .vk-btn:disabled, .view-kit input[type=range]:disabled { opacity: 0.4; cursor: not-allowed; }
 .view-panel {
   position: absolute; left: 10px; top: 62px; z-index: 4; width: min(300px, calc(100% - 20px)); max-height: calc(100% - 72px); overflow: auto;
   padding: 12px; border-radius: 16px; border: 1px solid var(--panel-border); background: rgba(8, 21, 19, 0.93); color: var(--text);

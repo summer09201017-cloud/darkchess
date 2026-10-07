@@ -83,6 +83,7 @@ const elements = {
   board3dCanvas: document.querySelector("#board3dCanvas"),
   viewButton: document.querySelector("#viewButton"),          // 🎥 視角(開合浮動面板)
   viewPanel: document.querySelector("#viewPanel"),
+  flat2dButton: document.querySelector("#flat2dButton"),     // 🗺 2D / 🧊 3D(v14)
   retryAiButton: document.querySelector("#retryAiButton"),    // AI 逾時 / 出錯時才出現
   renderNotice: document.querySelector("#renderNotice"),      // 3D 開不起來 / 中斷的說明
 };
@@ -227,7 +228,7 @@ function loadView3d() {
       const v = JSON.parse(raw);
       if (v && v.version === 1 && ["top", "flat", "sit", "custom"].includes(v.preset) && Number.isFinite(v.yaw)
         && (v.pitch === null || Number.isFinite(v.pitch))) {
-        return { preset: v.preset, yaw: normalizeAngle(v.yaw), pitch: v.pitch === null ? null : clamp(v.pitch, 20, 88) };
+        return { preset: v.preset, yaw: normalizeAngle(v.yaw), pitch: v.pitch === null ? null : clamp(v.pitch, 20, 88), flat2d: v.flat2d === true };
       }
     }
   } catch (error) { /* 壞 JSON / storage 被擋:退回舊設定換算 */ }
@@ -245,7 +246,7 @@ function migrateView3d(settings) {
   return { preset: "top", yaw: 0, pitch: null };
 }
 function saveView3d(v) {
-  try { localStorage.setItem(VIEW3D_KEY, JSON.stringify({ version: 1, preset: v.preset, yaw: v.yaw, pitch: v.pitch })); }
+  try { localStorage.setItem(VIEW3D_KEY, JSON.stringify({ version: 1, preset: v.preset, yaw: v.yaw, pitch: v.pitch, flat2d: v.flat2d === true })); }
   catch (error) { /* 私密模式:這場有效 */ }
 }
 
@@ -260,6 +261,7 @@ function init3d() {
         canvas: elements.board3dCanvas,
         viewButton: elements.viewButton,
         viewPanel: elements.viewPanel,
+        flat2dButton: elements.flat2dButton,
         initialView: loadView3d(),
         onTap: (index) => handleCellClick(index),
         onViewChange: saveView3d,

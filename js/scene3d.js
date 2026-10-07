@@ -7,6 +7,8 @@
  *      pointercancel / lostpointercapture / 第二根手指加入 / 在盤外放開 ⇒ 這次手勢作廢。畫布上不聽 click(沒有雙送的可能)。
  *   ③ 視角面板(skill board3d-kit 的 view-kit:三段預設 + 兩條滑桿 + 換邊 + 重置),浮動在棋盤角落,開合鈕「🎥 視角」
  *   ④ 動物對手坐進同一個 scene(opponent.js)
+ *   ⑤ 🗺 2D 平面(v14):「🗺 2D」鈕切正交相機正上方往下看(棋子只看得到頂面 = 平面棋子);只剩水平旋轉,
+ *      俯角滑桿 / 三段預設灰掉,動物先收起來;3D 角度原封保留,按「🧊 3D」回原角度。
  * 動畫 / 語音 / 渲染都**無權**改勝負或回合:app.js 先把規則提交完,才叫 sync() 播;播完 resolve,app.js 才開下一手。
  */
 import { Board3D } from "./board3d.js";
@@ -25,7 +27,8 @@ function reducedMotion() {
  * @param o.canvas    <canvas>
  * @param o.viewButton「🎥 視角」開合鈕
  * @param o.viewPanel 浮動面板(裡面塞 view-kit)
- * @param o.initialView { preset:"top"|"flat"|"sit"|"custom", yaw:number, pitch:number|null }
+ * @param o.initialView { preset:"top"|"flat"|"sit"|"custom", yaw:number, pitch:number|null, flat2d?:boolean }
+ * @param o.flat2dButton「🗺 2D / 🧊 3D」切換鈕(可省)
  * @param o.onTap(index)      點中一格(已經過手勢判定;鎖不鎖由 app.js 決定)
  * @param o.onViewChange(v)   視角被使用者改了(要存)
  * @param o.onContextLost()   WebGL 中途掛掉
@@ -48,6 +51,8 @@ export function createScene3D(o) {
     board.yaw = normYaw(v && Number.isFinite(v.yaw) ? v.yaw : 0);
     if (preset === "custom" && v && Number.isFinite(v.pitch)) { board.view = "top"; board.setPitch(clampPitch(v.pitch)); }
     else board.setView(preset === "custom" ? "top" : preset);
+    const want2d = !!(v && v.flat2d === true);
+    if (want2d !== board.flat2d) board.set2D(want2d);
   }
   function currentView() {
     const custom = board.pitchOverride != null;
@@ -56,6 +61,7 @@ export function createScene3D(o) {
       preset: custom ? "custom" : board.view,
       yaw: normYaw(board.yaw),
       pitch: custom ? clampPitch(board.pitchOverride) : null,
+      flat2d: board.flat2d,
     };
   }
   const emitView = () => { try { o.onViewChange && o.onViewChange(currentView()); } catch { /* 存不了就算了 */ } };
@@ -68,7 +74,8 @@ export function createScene3D(o) {
       get: () => ({ yaw: board.yaw, pitch: board._pitchFor() }),
       set: ({ yaw, pitch }) => {
         board.yaw = normYaw(yaw);
-        if (board.pitchOverride == null && Math.abs(pitch - Math.round(board._pitchFor())) < 0.5) board.fitCamera();
+        if (board.flat2d) board.fitCamera();   // 2D:俯角滑桿是灰的,只吃水平旋轉
+        else if (board.pitchOverride == null && Math.abs(pitch - Math.round(board._pitchFor())) < 0.5) board.fitCamera();
         else board.setPitch(pitch);
         emitView();
       },
@@ -82,6 +89,27 @@ export function createScene3D(o) {
       },
     });
   }
+  /* ── 🗺 2D 平面切換 ── */
+  function sync2D() {
+    const on = board.flat2d;
+    if (o.flat2dButton) {
+      o.flat2dButton.textContent = on ? "🧊 3D" : "🗺 2D";
+      o.flat2dButton.setAttribute("aria-pressed", String(on));
+      o.flat2dButton.title = on ? "切回立體棋盤(回到原本的 3D 角度)" : "切成平面棋盤(正上方往下看)";
+    }
+    if (kit) {
+      for (const el of kit.el.querySelectorAll('[data-vk-view], [data-vk-range="pitch"]')) el.disabled = on;
+      if (!on) kit.sync();
+    }
+    layoutPet();
+  }
+  function set2D(on) {
+    board.set2D(on === true);
+    sync2D();
+    emitView();
+  }
+  o.flat2dButton?.addEventListener("click", () => set2D(!board.flat2d));
+
   const setPanel = (open) => {
     if (!o.viewPanel) return;
     o.viewPanel.hidden = !open;
@@ -111,6 +139,7 @@ export function createScene3D(o) {
     if (!g.dragging && Math.abs(dx) + Math.abs(dy) < DRAG_THRESHOLD) return;
     g.dragging = true;
     board.yaw = normYaw(g.yaw0 - dx * 0.45);
+    if (board.flat2d) { board.fitCamera(); return; }   // 2D:拖曳只轉方向,不改俯角
     const p = clampPitch(g.pitch0 + dy * 0.22);
     if (Math.abs(dy) >= DRAG_THRESHOLD) board.setPitch(p); else board.fitCamera();
   });
@@ -135,8 +164,9 @@ export function createScene3D(o) {
   function layoutPet() {
     if (!pet) return;
     const w = o.host.clientWidth, h = o.host.clientHeight;
-    pet.setSuppressed(h < 480 && w > h);
+    pet.setSuppressed((h < 480 && w > h) || board.flat2d);   // 2D 正上方看不到坐在對面的動物 ⇒ 先收起來
   }
+  sync2D();
   const ro = typeof ResizeObserver === "function" ? new ResizeObserver(() => layoutPet()) : null;
   ro?.observe(o.host);
 
@@ -158,7 +188,9 @@ export function createScene3D(o) {
     },
     animalFor, PET_MODES, ANIMALS,
     getView: currentView,
-    setView(v) { applyView(v); kit?.sync(); },
+    setView(v) { applyView(v); kit?.sync(); sync2D(); },
+    set2D,
+    get flat2d() { return board.flat2d; },
     cellToScreen(index) { return board.cellToScreen(Math.floor(index / 4), index % 4); },
     pieceTopToScreen(index) { return pieces.pieceTopToScreen(index); },
     pick(x, y) { return pieces.pick(x, y); },
@@ -177,7 +209,7 @@ export function createScene3D(o) {
     probe() {
       return {
         yaw: board.yaw, pitch: +board._pitchFor().toFixed(2), view: board.view, pitchOverride: board.pitchOverride,
-        camDist: +(board.camDist || 0).toFixed(3), aspect: +board.camera.aspect.toFixed(3),
+        camDist: +(board.camDist || 0).toFixed(3), aspect: +board.persCam.aspect.toFixed(3), flat2d: board.flat2d,
         dpr: board.renderer.getPixelRatio(), canvas: { w: o.canvas.width, h: o.canvas.height },
         ...pieces.probe(), pet: pet ? pet.probe() : null, panelOpen: o.viewPanel ? !o.viewPanel.hidden : false,
       };

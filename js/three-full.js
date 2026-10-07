@@ -14,7 +14,7 @@ if (!T) throw new Error("three-full: 要先載入 vendor/three.r128.min.js");
 
 export default T;
 export const {
-  Group, Object3D, Mesh, Scene, PerspectiveCamera, WebGLRenderer, Sprite, SpriteMaterial,
+  Group, Object3D, Mesh, Scene, PerspectiveCamera, OrthographicCamera, WebGLRenderer, Sprite, SpriteMaterial,
   SphereGeometry, CylinderGeometry, CapsuleGeometry, BoxGeometry, PlaneGeometry, CircleGeometry, RingGeometry, TorusGeometry,
   BufferGeometry, Float32BufferAttribute,
   MeshStandardMaterial, MeshBasicMaterial, MeshLambertMaterial,

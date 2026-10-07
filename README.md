@@ -17,6 +17,11 @@
 
 ## 功能
 
+- 🗺 **2D 平面視角(2026-10-08,verTag v14 / sw v18;HFP 機・1008-暗棋2D視角-家裡 場)**:「🎥 視角」旁多一顆「🗺 2D / 🧊 3D」。
+  2D = Board3D 另一台 **OrthographicCamera** 正上方往下看(`board.set2D(on)` 換 `board.camera`;pick / cellToScreen / 標記都讀 `board.camera`,Raycaster 對正交相機一樣成立 ⇒ 命中不另寫),
+  取景 `_fitOrtho()`:盤角(含盤身外緣)投到 yaw 的畫面兩軸、照 FIT_EDGE 留邊、置中;相機高 4(< fog 起點 7)。只剩水平旋轉(拖曳只改 yaw、俯角滑桿與三段預設灰掉),
+  3D 的 view / pitchOverride 原封保留 ⇒ 切回 3D 回原角度。偏好存在 `cloud-banqi-3d-view-v1` 加欄位 `flat2d`(舊版讀到會忽略)。2D 時動物 `setSuppressed`(正上方看不到坐對面的牠)。
+  驗收 `npm run test:3d` ⑱ 段(32 格投影↔點擊全對 / 置中 / 真點翻子 / 換邊 / 拖曳不改俯角 / 重整記得 / 切回原角度 / 手機直向)。
 - 🩹 **翻棋不閃、畫布不亂重設、棋盤左右置中(2026-10-07,verTag v13 / sw v15;喬治機・1007-darkchess-翻棋閃爍置中-喬治 場)**:
   使用者回報「每翻一個棋子,畫面就會 LAG 與閃一下;棋盤太右邊,沒置中」。源碼裡會造成「每翻一枚就閃 / 頓」的路徑有四條,逐一堵掉;偏右是確定的 bug。
   ① **翻面動畫**(`js/pieces3d.js`):每枚棋子底面多一片平時隱藏的圓片 `under`;翻面時正面貼在它上面、跟著 pivot 從底下**一路轉 180°** 上來(緩入緩出),
