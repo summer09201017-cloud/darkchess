@@ -870,6 +870,9 @@ body.fit-play:not(.panels-open) .board { width: var(--fit-board-w, min(96vw, 32.
   body.fit-play:not(.panels-open) .status-card__row { flex-direction: column; align-items: stretch; gap: 6px; padding-right: 0; }   /* 橫向右欄已用 padding-top 讓位,不用再讓右邊 */
   body.fit-play:not(.panels-open) .status-card__row > .status-mini,
   body.fit-play:not(.panels-open) .menu-fold-button { margin-left: 0; }
+  /* v13(1007):手機橫向的「玩的版面」以前把版本與改版簡歷整個藏掉 ⇒ 玩家看不到開的是哪一版(使用者回報「暗棋沒有版本與歷史簡歷」)。
+     只在這個右欄版面放回來:右欄本來就可捲、不吃棋盤高度。上方狀態列那種(桌機 ⛶)仍藏,不然棋盤會被擠到 55% 以下(check-fit ②)。 */
+  body.fit-play:not(.panels-open) .ver-fold { display: block !important; font-size: 12px; margin: 4px 0 0; }
 }
 /* 桌機也有右上角固定的 ⛶ 了(42px):標題列右邊讓出位子 */
 .hero { padding-right: 64px; }
