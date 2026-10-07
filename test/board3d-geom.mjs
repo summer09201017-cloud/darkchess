@@ -149,5 +149,31 @@ section("⑤ 垂直置中(centerFit)不改命中:置中前後,同一個畫面點
   }
 }
 
+section("⑥ 水平置中(v13):yaw 不是 0/180 時盤的投影左右不對稱,置中後盤框中心要在畫面正中;置中不改命中;反例要抓得到");
+{
+  const cornersX = (b) => {
+    let lx = Infinity, hx = -Infinity;
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) { const q = ndcOf(b, sx * b.halfX, sz * b.halfZ); lx = Math.min(lx, q.x); hx = Math.max(hx, q.x); }
+    return { lx, hx, c: (lx + hx) / 2 };
+  };
+  for (const yaw of [350, 20, 135, 300]) for (const aspect of [1.5, 390 / 844, 1920 / 1080]) {
+    const b = fakeBoard({ aspect, yaw, pitch: 46 });
+    const { c, lx, hx } = cornersX(b);
+    ok(Math.abs(c) < 0.01, `yaw ${yaw} aspect ${aspect.toFixed(2)}:盤框左右置中(中心 ${c.toFixed(4)})`, `${lx.toFixed(3)}..${hx.toFixed(3)}`);
+    ok(Math.max(Math.abs(lx), Math.abs(hx)) <= 0.97, `yaw ${yaw} aspect ${aspect.toFixed(2)}:盤角仍在 ±0.96 內`, `${lx.toFixed(3)}..${hx.toFixed(3)}`);
+    for (let i = 0; i < 32; i++) {
+      const { row, col } = idxToRC(i);
+      const w = b.cellToWorld(row, col);
+      const q = ndcOf(b, w.x, w.z);
+      const hit = pickNdc(b, q.x, q.y);
+      ok(hit && hit.idx === i, `yaw ${yaw} aspect ${aspect.toFixed(2)}:置中後點 idx ${i} 仍回 idx ${i}`, JSON.stringify(hit));
+    }
+  }
+  // 反例:關掉 centerFit(= v12 以前只貼邊的做法)yaw 350 就該偏 —— 證明這段測試量得到東西
+  const b0 = fakeBoard({ aspect: 1.5, yaw: 350, pitch: 46 });
+  b0.opt.centerFit = false; b0.fitCamera();
+  ok(Math.abs(cornersX(b0).c) > 0.02, "反例:不置中時 yaw 350 的盤框中心明顯偏離(v12 症狀:1440 寬偏右 36px)", cornersX(b0).c.toFixed(4));
+}
+
 console.log(`🔬 board3d-geom:${pass} 過 / ${fail} 失敗`);
 process.exit(fail ? 1 : 0);

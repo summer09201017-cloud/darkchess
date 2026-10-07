@@ -17,6 +17,23 @@
 
 ## 功能
 
+- 🩹 **翻棋不閃、畫布不亂重設、棋盤左右置中(2026-10-07,verTag v13 / sw v15;喬治機・1007-darkchess-翻棋閃爍置中-喬治 場)**:
+  使用者回報「每翻一個棋子,畫面就會 LAG 與閃一下;棋盤太右邊,沒置中」。源碼裡會造成「每翻一枚就閃 / 頓」的路徑有四條,逐一堵掉;偏右是確定的 bug。
+  ① **翻面動畫**(`js/pieces3d.js`):每枚棋子底面多一片平時隱藏的圓片 `under`;翻面時正面貼在它上面、跟著 pivot 從底下**一路轉 180°** 上來(緩入緩出),
+  播完才把正面搬回頂面那片、`under` 藏回(`_settleFace`;180° 與歸零兩個姿勢畫面相同)。v12 是「轉到 90° 把頂面換貼圖、角度跳回 −90°」——
+  側立那一幀站著的「暗」字圓片憑空消失、露出木頭頂蓋,每翻一枚都閃一下。**暗子鐵則不變**:t ≥ 0.5 才貼、貼上那一刻那片正背對相機(check-3d ⑤ 0/25/49% 仍只有背面)。
+  ② **`board3d.resize()` 沒變就跳過**:尺寸與 dpr 都一樣就 return(`renderer.setSize` / `setPixelRatio` 每叫一次都重設 `canvas.width` = 畫布清空、閃黑一幀;
+  手機網址列收合 / 鍵盤會亂發 window resize);真的變了當場 `render` 補一幀(ResizeObserver 回呼在 rAF 之後、paint 之前,不補就送出黑畫布)。`rebuild()` 前清 `_lastSize`。
+  ③ **看不見的 DOM 無障礙棋盤不做視覺**(styles.css `body.has-3d .board…`):它原本仍揹著 rotateX/rotateZ + drop-shadow + 每顆棋子 transition,
+  每翻一枚瀏覽器都在重新光柵化一塊被剪成 1px 的 3D 圖層;只拿掉視覺,Tab / Enter / aria 照舊。`.board-card` 在 3D 模式不再 `backdrop-filter`(畫布 60fps 疊在模糊層上)。
+  ④ **`pieces.setMarks` 同一組標記不重建**(JSON 簽名相同就 return;一手翻棋的 render 鏈會叫到 10 次,真的變的只有 1~2 次)。
+  ⑤ **水平置中**(`board3d.fitCamera`):`centerFit` 原本只垂直置中(setViewOffset y);yaw 不是 0/180 時(舊玩家從 CSS 視角遷移來的 350°)
+  長方形棋盤的投影左右不對稱,只靠「最外側的角貼到邊」整塊就偏到一邊 —— 線上實測 1440 寬偏右 36px、1920 寬 42px。現在 x 也量投影範圍中點、同一個 `setViewOffset`
+  一起平移(命中 / cellToScreen 讀同一個投影矩陣,不會偏);盤角仍夾在 ±FIT_EDGE 內。修後本機 / 線上 yaw 350 盤框偏 −2px。
+  驗:`npm run test:core` board3d-geom 7841 → **8250**(新 ⑥ 水平置中:4 yaw × 3 aspect × 32 格來回 + 盤角在邊內 + 反例「不置中就偏」);
+  `npm run test:3d` check-3d 139 → **149** 條(⑫ 舊視角遷移每個 spin 加「盤框左右置中 ≤ 2px」;新 ⑰ 畫布不亂重設:5 次假 resize 零重設、真改視窗才重設且盤仍在畫布內、翻面 30% / 60% / 播完三格驗 `under` 可見性與角度不跳負)。
+  ⚠ **誠實聲明**:翻棋「LAG + 閃」在喬治機(RTX 3050)的有頭 Edge / Chrome 用 Playwright 量**不到**(rAF 無 > 40ms 空窗、零 longtask、零 canvas 重設、layout-shift 0);
+  上面 ①~④ 是逐條讀源碼找出的所有會造成「每翻一枚就閃 / 頓」的機制,①在任何裝置都看得見、②③④偏弱機 / 手機。使用者實機再回報。
 - 🧊 **原址升級真 3D(2026-09-29,verTag v12 / sw v14;規格 `Documents/Codex/2026-09-28/0917-3d-11-3d-3d-3d/work/dark-3d-spec-draft.md`)**:
   棋盤、32 枚棋子、動物對手都在**同一個** three scene(`js/scene3d.js` 總控,ES module 經 index.html 橋接成 `window.Banqi3D`)。
   分層照 skill `board3d-kit`:底座 `js/board3d.js`(來自 gomoku3d,含 fitExtra 動物讓位)只管「一張會被點的立體棋盤」;
@@ -137,7 +154,8 @@ curl -s "https://darkchesscodex.pages.dev/sw.js?b=$RANDOM" | grep CACHE_NAME   #
 
 作品集已收、`sites.json` 棋類已登。新功能上線後照 skill `portfolio-ledger-guard` 收尾。
 
-- 🟡 **🧊 原址升級真 3D(0929 HFP 機,verTag v12 / sw v14)**:本機全部測試綠(見「功能」第一條);**尚未部署**到 darkchesscodex、線上未驗、真機未驗(等使用者決定發布)。
+- ✅ **🩹 翻棋不閃 / 畫布不亂重設 / 棋盤左右置中(1007 喬治機,verTag v13 / sw v15)**:見「功能」第一條;已部署 darkchesscodex、線上 probe yaw 350 盤框偏 −2px。
+- ✅ **🧊 原址升級真 3D(0929 HFP 機,verTag v12 / sw v14)**:0930 使用者拍板後已 push + 部署,線上 sw v14(HANDOFF 0930 ★段);本機七支測試全綠。
 - ✅ **🐾 動物對手坐到棋盤對面(0928 HFP 機・Fable 5.1・0928-3D動物對手-象棋家族-家裡 場,verTag v11 / sw v13)**:見上面「功能」第一條;CSS 斜視站用透明 WebGL 小窗,同一套引擎 / 人聲。
 - ✅ **拔掉「index.html 進 SW 快取名單」地雷(0914 全艦隊,verTag v10 / sw v12)**:`APP_ASSETS` 拔 `./index.html`、退路 `caches.match("./")` 只給導覽請求、`addAll` → 逐一 `add().catch()`;線上 `check-sw-nav-fleet.mjs` 🟢(開 /index.html 兩次不 ERR_FAILED、快取無 redirected、離線回殼層)。見「部署」段的 ⚠。
 - ✅ **⛶ 放大真的放大 + 桌機 ⛶ + 手機橫向自動滿版(0914,v9 / sw v11)**:`body.fit-play`(app.js `syncFitPlay`/`fitBoard`/`bindFitPlay`,styles.css 檔尾)—— 沉浸或手機橫向時整頁一屏,棋盤用所有子孫的投影框聯集逐步縮放到剛好裝進 `.board-card`(`--fit-board-w` + `--fit-shift`);`#mfsExit` 是看得見的出口(同一個 toggle);「☰ 選單」= `body.panels-open` 暫回一般版面。驗:`CHECK_URL=… node scripts/check-fit.mjs`(本機預設 8797)。

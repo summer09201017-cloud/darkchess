@@ -497,9 +497,11 @@ section("⑫ 舊視角遷移 / 壞設定");
       for (const i of [0, 3, 28, 31]) pts[i] = R.cellToScreen(i);
       const cx = (pts[0].x + pts[3].x + pts[28].x + pts[31].x) / 4, cy = (pts[0].y + pts[3].y + pts[28].y + pts[31].y) / 4;
       const ang = {}; for (const k of Object.keys(pts)) ang[k] = Math.atan2(pts[k].y - cy, pts[k].x - cx) * 180 / Math.PI;
-      return { ang, view: R.getView(), pitch: R.probe().pitch, stored: localStorage.getItem("cloud-banqi-settings-v1") };
+      const box = R.boardScreenBox(), cv = document.querySelector("#board3dCanvas").getBoundingClientRect();
+      return { ang, view: R.getView(), pitch: R.probe().pitch, stored: localStorage.getItem("cloud-banqi-settings-v1"), offX: Math.round((box.l + box.r) / 2 - (cv.left + cv.right) / 2), boxW: Math.round(box.w) };
     });
     const worst = Math.max(...Object.keys(row.angles).map((k) => { const d = Math.abs(((r.ang[k] - row.angles[k]) % 360 + 540) % 360 - 180); return d; }));
+    ok(Math.abs(r.offX) <= 2, `舊 spin ${row.spin}:盤框左右置中(中心偏 ${r.offX}px,盤寬 ${r.boxW}px)—— v13 前 350° 偏右 36px`);
     ok(worst <= 20, `舊 spin ${row.spin}/tilt 44 ⇒ yaw ${r.view.yaw}、俯角 ${r.pitch}°;四個角的畫面方位跟舊版差 ≤ 20°(最大 ${worst.toFixed(1)}°)`);
     if (row.spin === 350) ok(r.view.yaw === 350 && Math.abs(r.pitch - 46) < 0.01, `預設 tilt44/spin350 ⇒ 相機俯角 46°(${r.pitch})`);
     ok(JSON.parse(r.stored).viewSpin === row.spin && JSON.parse(r.stored).viewTilt === 44, "舊角度備份沒有被覆寫");
@@ -594,6 +596,37 @@ section("⑯ 離線");
   await page.waitForFunction(() => window.__banqi.state.turnCount >= 2 && !window.__banqi.animBusy, null, { timeout: 20000 }).catch(() => {});
   const s = await st(page);
   ok(mode === "3d" && s.turnCount >= 2, `斷網重開:3D(${mode})、翻子 + Worker AI 回手(turn ${s.turnCount})`);
+  await ctx.close();
+}
+
+/* ════════ ⑰ 畫布不亂重設(v13):尺寸沒變的 resize 事件不碰 canvas.width(碰了就清空 = 閃黑一幀);真的變了才重設、而且盤仍在畫布內 ════════ */
+section("⑰ 畫布不亂重設");
+{
+  const { ctx, page } = await open();
+  await page.evaluate(() => {
+    window.__wsets = 0;
+    const d = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, "width");
+    Object.defineProperty(HTMLCanvasElement.prototype, "width", { configurable: true, get() { return d.get.call(this); }, set(v) { if (this.id === "board3dCanvas") window.__wsets++; return d.set.call(this, v); } });
+  });
+  await page.evaluate(() => { for (let i = 0; i < 5; i++) window.dispatchEvent(new Event("resize")); window.__banqi.renderer.board.resize(); });
+  await page.waitForTimeout(200);
+  const n0 = await page.evaluate(() => window.__wsets);
+  ok(n0 === 0, `尺寸沒變:5 次 resize 事件 + 直接叫 resize() 都沒有重設畫布(${n0} 次)`);
+  await page.setViewportSize({ width: 1000, height: 700 });
+  await page.waitForTimeout(400);
+  const after = await page.evaluate(() => { const R = window.__banqi.renderer, cv = document.querySelector("#board3dCanvas").getBoundingClientRect(), box = R.boardScreenBox(); return { n: window.__wsets, inCanvas: box.l >= cv.left - 1 && box.r <= cv.right + 1 && box.t >= cv.top - 1 && box.b <= cv.bottom + 1, w: R.probe().canvas.w }; });
+  ok(after.n >= 1 && after.inCanvas, `真的改了視窗:畫布重設(${after.n} 次)、盤仍整塊在畫布內(canvas ${after.w}px)`);
+  // 翻面全程:底面那片只在動畫中可見、播完藏回;頂面最後貼的是正面
+  await page.evaluate(() => { const B = window.__banqi; B.startNewGame("t"); B.state.mode = "local"; B.render({ fullBoard: true }); });
+  await page.locator("#board3d").scrollIntoViewIfNeeded();   // 剛改過視窗(1000×700),盤在首屏外;不捲進來 mouse.click 點不到(⑤ 同一招)
+  await page.evaluate(() => window.__banqi.renderer.board.renderer.setAnimationLoop(null));
+  const p = await screenOf(page, 5);
+  await page.mouse.click(p.x, p.y);
+  const step = (dt) => page.evaluate((dt) => { const R = window.__banqi.renderer; R.pieces.update(dt); const pr = R.probe(); const me = pr.pieces.find((x) => x.index === 5); return { under: pr.underVisible, me: me.faceKind, rx: +[...R.pieces.items.values()].find((it) => it.index === 5).pivot.rotation.x.toFixed(3) }; }, dt);
+  const a = await step(0.32 * 0.3), b = await step(0.32 * 0.3), c = await step(0.5);
+  ok(a.under === 0 && a.me === "back" && a.rx > 0 && a.rx < Math.PI / 2, `30%:底面那片還藏著、角度 ${a.rx} 在 0~90° 之間`);
+  ok(b.under === 1 && b.me === "face" && b.rx > Math.PI / 2 && b.rx < Math.PI, `60%:正面貼在底面那片(可見 ${b.under})、角度 ${b.rx} 在 90~180° 之間、沒有跳回負角度`);
+  ok(c.under === 0 && c.me === "face" && c.rx === 0, `播完:底面那片藏回、頂面是正面、角度歸零(${c.rx})`);
   await ctx.close();
 }
 

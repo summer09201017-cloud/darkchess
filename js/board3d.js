@@ -133,11 +133,21 @@ export class Board3D {
     const h = this.canvas.clientHeight || this.canvas.parentElement?.clientHeight || window.innerHeight;
     // ★ dpr 要**每次 resize 重設**:換螢幕/瀏覽器縮放會改 devicePixelRatio,只在 init 設一次
     //   的站在手機上是 1/3 解析度再被放大(整個畫面糊,而且零紅燈)⇒ board-game-designer 🔍 那條。
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    /* ★ 站內適配 ⑧(v13):尺寸、dpr 都沒變就什麼都不做。
+       renderer.setPixelRatio / setSize 每叫一次都會重設 canvas.width ⇒ 畫布當場清空、要等下一幀才畫回來 = 畫面閃黑一下;
+       而 window 的 resize 事件在手機上(網址列收合、鍵盤、系統列)會頻繁亂發,畫布其實一個像素都沒變。 */
+    const last = this._lastSize;
+    if (last && last.w === w && last.h === h && last.dpr === dpr) return false;
+    this._lastSize = { w, h, dpr };
+    this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(w, h, false);
     this.camera.aspect = Math.max(w / Math.max(h, 1), 0.2);
     this.camera.updateProjectionMatrix();
     this.fitCamera();
+    /* ★ 真的改了尺寸 ⇒ 當場補畫一幀:ResizeObserver 回呼跑在 rAF 之後、paint 之前,不補畫的話這一幀送出去的就是剛清空的黑畫布 */
+    this.renderer.render(this.scene, this.camera);
+    return true;
   }
 
   /* ── 幾何:格 ↔ 世界 ── */
@@ -265,7 +275,7 @@ export class Board3D {
       // 站內適配 ⑦:低視角(34°)時盤身前側面 + 木框會露在盤面下緣之下 ⇒ 盤底四角也收進來(不然前緣貼到畫布底)
       if (this.opt.fitSlab) pts.push({ p: new THREE.Vector3(sx * (this.halfX + 0.05), TABLE_Y - THICK - 0.045, sz * (this.halfZ + 0.05)), ex: FIT_EDGE_X, ey: FIT_EDGE_Y });
     }
-    /* ★ 站內適配 ⑥(雲臺暗棋 v12):opt.centerFit = 取景「垂直置中」。
+    /* ★ 站內適配 ⑥(雲臺暗棋 v12):opt.centerFit = 取景「垂直置中」(v13 起水平也置中,見下面 setViewOffset 那段)。
        底座把盤心釘在畫面正中 ⇒ 動物頭頂(fitExtra)只在上面,上下卻各縮一份,桌機沉浸版棋盤只剩 50% 高。
        改成:算出所有取景點投影後的上下範圍,用 camera.setViewOffset 把那一段移到畫面中間(只平移投影,不動相機)——
        Raycaster.setFromCamera / Vector3.project 都讀同一個投影矩陣,所以 pickCell、cellToScreen 跟著一起對,命中不會偏。
@@ -280,12 +290,13 @@ export class Board3D {
     };
     const measure = (list) => {
       const qs = list.map(({ p, ex, ey }) => ({ q: p.clone().project(this.camera), ex, ey }));
-      let lo = Infinity, hi = -Infinity;
-      for (const { q } of qs) { lo = Math.min(lo, q.y); hi = Math.max(hi, q.y); }
+      let lo = Infinity, hi = -Infinity, lx = Infinity, hx = -Infinity;
+      for (const { q } of qs) { lo = Math.min(lo, q.y); hi = Math.max(hi, q.y); lx = Math.min(lx, q.x); hx = Math.max(hx, q.x); }
       const yc = center ? (lo + hi) / 2 : 0;
+      const xc = center ? (lx + hx) / 2 : 0;
       let k = 0;
-      for (const { q, ex, ey } of qs) k = Math.max(k, Math.abs(q.x) / ex, Math.abs(q.y - yc) / ey);   // 哪一點先頂到,就聽哪一點的
-      return { k, yc };
+      for (const { q, ex, ey } of qs) k = Math.max(k, Math.abs(q.x - xc) / ex, Math.abs(q.y - yc) / ey);   // 哪一點先頂到,就聽哪一點的
+      return { k, yc, xc };
     };
     const solve = (list, d0) => {
       let d = d0;
@@ -308,18 +319,25 @@ export class Board3D {
     }
     placeCam(d);
     this.viewShiftY = 0;
+    this.viewShiftX = 0;
     if (center) {
-      let { yc } = measure(list);
-      // 夾住:盤角(主角)一定在 ±FIT_EDGE_Y 內;配角(動物頭)被切一點可以
-      let lo = Infinity, hi = -Infinity;
-      for (const { p } of pts) { const q = p.clone().project(this.camera); lo = Math.min(lo, q.y); hi = Math.max(hi, q.y); }
+      let { yc, xc } = measure(list);
+      // 夾住:盤角(主角)一定在 ±FIT_EDGE 內;配角(動物頭)被切一點可以
+      let lo = Infinity, hi = -Infinity, lx = Infinity, hx = -Infinity;
+      for (const { p } of pts) { const q = p.clone().project(this.camera); lo = Math.min(lo, q.y); hi = Math.max(hi, q.y); lx = Math.min(lx, q.x); hx = Math.max(hx, q.x); }
       yc = Math.min(Math.max(yc, hi - FIT_EDGE_Y), lo + FIT_EDGE_Y);
-      if (Math.abs(yc) > 1e-4) {
+      xc = Math.min(Math.max(xc, hx - FIT_EDGE_X), lx + FIT_EDGE_X);
+      if (Math.abs(yc) > 1e-4 || Math.abs(xc) > 1e-4) {
         const H = 1000, W = H * this.camera.aspect;
-        this.camera.setViewOffset(W, H, 0, -yc * H / 2, W, H);   // yc > 0(內容偏上)⇒ 視窗往上移 ⇒ 內容往下回到中間
+        /* yc > 0(內容偏上)⇒ 視窗往上移(y 給負)⇒ 內容往下回到中間。
+           ★ v13 水平也置中:xc > 0(內容偏右)⇒ 視窗往右移(x 給正)⇒ 內容往左回到中間。
+           yaw 不是 0 / 180 時(例如舊玩家從 CSS 視角遷移來的 350°)長方形棋盤的投影左右不對稱,
+           只靠「最外側的角貼到邊」會讓整塊棋盤偏到一邊(0929 線上實測 1440 寬偏右 36px、1920 寬偏右 42px)。 */
+        this.camera.setViewOffset(W, H, xc * W / 2, -yc * H / 2, W, H);
         this.camera.updateProjectionMatrix();
       }
       this.viewShiftY = yc;
+      this.viewShiftX = xc;
     }
     this.camDist = d;
     if (typeof this.onCamera === "function") { try { this.onCamera(); } catch { /* 回呼壞掉不能弄壞相機 */ } }
@@ -336,6 +354,7 @@ export class Board3D {
     }
     this._boardGroup = this._buildBoard();
     this.scene.add(this._boardGroup);
+    this._lastSize = null;   // 盤重建 ⇒ 一定要重新取景(resize 的「沒變就跳過」不能擋到這裡)
     this.resize();
   }
 

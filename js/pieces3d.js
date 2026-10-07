@@ -127,7 +127,14 @@ export class PieceSet {
     const face = new THREE.Mesh(this.faceGeo, this.backMat);
     face.rotation.x = -Math.PI / 2;
     face.position.y = this.H / 2 + 0.0015;
-    pivot.add(body, face);
+    /* ★ v13:底面也放一片圓片(平時隱藏、素色木)。翻面時正面貼在**這一片**上,跟著 pivot 從底下一路轉上來(0 → 180°),
+       不再是「轉到 90° 把頂面換貼圖、角度跳回 -90°」—— 那一跳會讓站著的「暗」字圓片在側立那一幀憑空消失、露出木頭頂蓋,
+       每翻一枚都閃一下。播完才把正面搬回頂面那片、這片藏回去(180° 跟歸零兩個姿勢畫面完全相同,看不出切換)。 */
+    const under = new THREE.Mesh(this.faceGeo, this.wood);
+    under.rotation.x = Math.PI / 2;
+    under.position.y = -this.H / 2 - 0.0015;
+    under.visible = false;
+    pivot.add(body, face, under);
     spin.add(pivot);
     group.add(spin);
     // ★ 名稱只寫格位 / 牌位種類,暗子**不寫**任何底細;userData 保持空物件
@@ -135,7 +142,7 @@ export class PieceSet {
     const w = this.board.cellToWorld(Math.floor(index / 4), index % 4);
     group.position.set(w.x, 0, w.z);
     this.root.add(group);
-    const item = { key, index, hidden, group, spin, pivot, face, faceKind: "back", lift: 0, removing: false };
+    const item = { key, index, hidden, group, spin, pivot, face, under, faceKind: "back", lift: 0, removing: false };
     this.items.set(key, item);
     return item;
   }
@@ -150,8 +157,21 @@ export class PieceSet {
     return m;
   }
 
-  _showFace(item, cell) {
+  _showFace(item, cell, viaUnder = false) {
+    const mat = this._faceMat(cell.side, cell.label);
+    if (viaUnder) { item.under.material = mat; item.under.visible = true; }   // 翻面中:正面先貼在底面那片(這一刻它正背對相機)
+    else item.face.material = mat;
+    item.faceKind = "face";
+    item.hidden = false;
+    item.group.name = "piece";
+  }
+
+  /** 翻面播完:正面搬回頂面那片、底面那片藏回素色、角度歸零(跟轉到 180° 的畫面一模一樣,所以看不出切換) */
+  _settleFace(item, cell) {
+    item.pivot.rotation.x = 0;
     item.face.material = this._faceMat(cell.side, cell.label);
+    item.under.visible = false;
+    item.under.material = this.wood;
     item.faceKind = "face";
     item.hidden = false;
     item.group.name = "piece";
@@ -221,12 +241,9 @@ export class PieceSet {
         jobs.push(this._animate(hid, 320, (e, t) => {
           if (gen !== this._gen) return;
           hid.lift = Math.sin(Math.PI * t) * this.H * 2.6;
-          if (t < 0.5) hid.pivot.rotation.x = Math.PI * t;            // 0 → 90°:還是背面朝上
-          else {
-            if (!swapped) { swapped = true; this._showFace(hid, cell); }   // ★ 越過中點(側立)才貼正面
-            hid.pivot.rotation.x = Math.PI * t - Math.PI;             // -90° → 0:正面轉上來
-          }
-        }, () => { hid.pivot.rotation.x = 0; hid.lift = 0; if (!swapped) this._showFace(hid, cell); }));
+          hid.pivot.rotation.x = Math.PI * e;                          // 0 → 180° 一路轉過去(緩入緩出),中途不跳角度
+          if (t >= 0.5 && !swapped) { swapped = true; this._showFace(hid, cell, true); }   // ★ 側立那一刻才把正面貼到底面那片(它正背對相機)
+        }, () => { this._settleFace(hid, cell); hid.lift = 0; }));
       }
     }
 
@@ -274,7 +291,11 @@ export class PieceSet {
 
   /** 盤面標記:選取 / 走 / 吃 / 上一手 / 💡 提示 / 鍵盤焦點。每次 render 重畫(≤ 40 個小 mesh,便宜) */
   setMarks(m) {
-    this.marks = { selected: null, targets: [], last: [], hint: [], focus: null, ...m };
+    const next = { selected: null, targets: [], last: [], hint: [], focus: null, ...m };
+    const sig = JSON.stringify(next);
+    if (sig === this._marksSig) return;   // ★ v13:同一組標記不重建(一手翻棋的 render 鏈會叫到 ~10 次,真的變的只有 1~2 次)
+    this._marksSig = sig;
+    this.marks = next;
     const g = this.markRoot;
     while (g.children.length) g.remove(g.children[0]);
     const at = (index) => this.board.cellToWorld(Math.floor(index / 4), index % 4);
@@ -439,7 +460,7 @@ export class PieceSet {
       });
     }
     list.sort((a, b) => a.index - b.index);
-    return { pieces: list, anims: this.anims.length, faceMats: this.faceMats.size, marks: this.markRoot.children.length };
+    return { pieces: list, anims: this.anims.length, faceMats: this.faceMats.size, marks: this.markRoot.children.length, underVisible: [...this.items.values()].filter((it) => it.under.visible === true).length };
   }
 
   dispose() {
