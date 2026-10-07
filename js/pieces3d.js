@@ -90,7 +90,7 @@ export class PieceSet {
     this.board = board;
     this.reduced = Boolean(opts.reduced);
     const p = board.opt.pitch;
-    this.R = p * 0.43;
+    this.R = p * 0.47;   // v15 0.43→0.47:棋子再大一點(格半寬 0.5,含 1.03 底部外擴仍留 1.5% 縫)
     this.H = p * 0.17;
     this.root = new THREE.Group();
     this.root.name = "pieces";

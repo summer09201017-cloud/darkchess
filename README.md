@@ -17,6 +17,9 @@
 
 ## 功能
 
+- ⛶ **手機直向真全螢幕 + 棋盤/棋子放大 + 細線(2026-10-08,verTag v15 / sw v19;HFP 機・1008-暗棋全螢幕-家裡 場)**:使用者截圖:⛶ 後狀態卡仍佔上方約三成(手機字放大),畫布只拿 65%。
+  ① styles.css 檔尾 `@media not (橫向矮螢幕)` 段:直向 fit-play 狀態卡壓成兩行(膠囊/計數/☰ 不換行、訊息+執色並排,各自省略號;擠不下先省略計數),#mfsExit 縮小;412×915 + 字級 120% 實測畫布高 73% → 90%、狀態卡 213 → 68px。
+  ② scene3d.js:`margin` 0.55 → 0.2(木框收窄、棋盤變大)、新選項 `lineScale: 0.016`(board3d.js makeGridTexture 讀 `o.lineScale`,預設仍 0.035,底座行為不變)。③ pieces3d.js:`R` = pitch×0.43 → 0.47。check-3d 159/0(⑱ 2D 段含)。
 - 🗺 **2D 平面視角(2026-10-08,verTag v14 / sw v18;HFP 機・1008-暗棋2D視角-家裡 場)**:「🎥 視角」旁多一顆「🗺 2D / 🧊 3D」。
   2D = Board3D 另一台 **OrthographicCamera** 正上方往下看(`board.set2D(on)` 換 `board.camera`;pick / cellToScreen / 標記都讀 `board.camera`,Raycaster 對正交相機一樣成立 ⇒ 命中不另寫),
   取景 `_fitOrtho()`:盤角(含盤身外緣)投到 yaw 的畫面兩軸、照 FIT_EDGE 留邊、置中;相機高 4(< fog 起點 7)。只剩水平旋轉(拖曳只改 yaw、俯角滑桿與三段預設灰掉),

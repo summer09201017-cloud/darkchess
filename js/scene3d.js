@@ -35,7 +35,7 @@ function reducedMotion() {
  */
 export function createScene3D(o) {
   const board = new Board3D(o.canvas, {
-    cols: 4, rows: 8, mode: "cell", pitch: 0.3, margin: 0.55, labels: false, centerFit: true, fitExtraMax: 1.22, fitSlab: true,
+    cols: 4, rows: 8, mode: "cell", pitch: 0.3, margin: 0.2, lineScale: 0.016, labels: false, centerFit: true, fitExtraMax: 1.22, fitSlab: true,
     storageKey: null,                               // 視角由 app 層存在 cloud-banqi-3d-view-v1,底座不另存
     wood: "#d9b77e", woodEdge: 0x7a5530, woodSide: 0xa8804a, lineColor: "#5a3b17",
     background: 0x0b1f1c, floorColor: 0x0a1715,

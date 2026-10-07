@@ -474,7 +474,7 @@ export function makeGridTexture(board, maxAniso = 1, doc = globalThis.document) 
     cx.fillRect(0, y, cv.width, (cv.height / 90) * (0.6 + (i % 3) * 0.3));
   }
 
-  const lw = Math.max(1.5, sx * o.pitch * 0.035);
+  const lw = Math.max(1.5, sx * o.pitch * (o.lineScale || 0.035));   // lineScale:站可傳更細的線(暗棋 v15 0.016)
   cx.strokeStyle = o.lineColor;
   cx.lineWidth = lw;
   cx.lineCap = "square";
